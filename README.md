@@ -3,7 +3,7 @@
 Ride real routes on an FTMS smart trainer, with resistance from the terrain grade and
 speed from your own physics model. See [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: phase 1. The BLE diagnostic tools (`crt-tool`) are implemented.
+Status: phase 2. BLE diagnostic tools and route preparation (`crt-tool route`) work.
 
 ## Setup
 
@@ -31,6 +31,27 @@ the trainer's response, for example `SET_INDOOR_BIKE_SIMULATION: SUCCESS`.
 
 Only one app at a time can control a trainer. Close Zwift or phone apps first. On
 Windows, do not pair the trainer in Windows Settings.
+
+## Route preparation
+
+```sh
+crt-tool route ride.gpx --plot                 # writes ride.crt.npz next to the GPX
+crt-tool route ride.gpx --plot-file ride.png --compare   # also plot Copernicus
+crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge query
+```
+
+* **Elevation:** ČÚZK DMR 5G (lidar terrain, 2 m) inside Czechia, Copernicus GLO-30
+  elsewhere. `--source file` uses the elevations in the route file. Downloaded data
+  is cached in the user cache directory (`~/.cache/crt` on Linux).
+* **Bridges and tunnels:** taken from OpenStreetMap through the public Overpass API,
+  one attempt per route. If it fails, the course is prepared without this correction
+  and the summary says `not checked`.
+* **Smoothing:** a 20 m Gaussian removes the steps that appear where the GPS track
+  strays from the road onto a cutting or embankment.
+
+Elevation data: © ČÚZK (CC BY 4.0); Copernicus DEM © DLR e.V., © Airbus Defence and
+Space GmbH, provided under COPERNICUS by the European Union and ESA. Bridges and
+tunnels: © OpenStreetMap contributors (ODbL).
 
 ## Hardware checklist (phase 1)
 

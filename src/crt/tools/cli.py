@@ -56,10 +56,13 @@ def _main(
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Debug logging.")] = False,
 ) -> None:
     logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.WARNING,
+        level=logging.WARNING,
         format="%(message)s",
         handlers=[RichHandler(console=console, show_path=False)],
     )
+    # Debug output only from this application: libraries (httpx, rasterio,
+    # matplotlib) are far too chatty at debug level.
+    logging.getLogger("crt").setLevel(logging.DEBUG if verbose else logging.INFO)
 
 
 def _run(coro) -> None:
@@ -466,6 +469,110 @@ def control_cmd(
                         console.print(message)
 
     _run(run())
+
+
+# ---------------------------------------------------------------------------
+# route
+# ---------------------------------------------------------------------------
+
+
+@app.command("route")
+def route_cmd(
+    route_file: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="GPX, TCX or FIT.")
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option("-o", "--output", help="Course file (default: next to the route, .crt.npz)."),
+    ] = None,
+    source: Annotated[
+        str,
+        typer.Option(help="Elevation: auto (DMR 5G, else Copernicus), dmr5g, copernicus, file."),
+    ] = "auto",
+    spacing: Annotated[float, typer.Option(help="Course grid spacing [m].")] = 2.0,
+    smoothing: Annotated[float, typer.Option(help="Profile smoothing, Gaussian sigma [m].")] = 20.0,
+    fix_bridges: Annotated[
+        bool,
+        typer.Option(
+            "--bridges/--no-bridges",
+            help="Correct bridges and tunnels from OpenStreetMap (skipped if Overpass fails).",
+        ),
+    ] = True,
+    plot: Annotated[bool, typer.Option(help="Show the elevation and grade profile.")] = False,
+    plot_file: Annotated[
+        Path | None, typer.Option(help="Save the profile plot (PNG, PDF, SVG).")
+    ] = None,
+    compare: Annotated[
+        bool, typer.Option(help="Also plot the Copernicus GLO-30 profile, for comparison.")
+    ] = False,
+) -> None:
+    """Prepare a route for riding: elevation from a DEM, bridge fix, smoothing, grade."""
+    # Imported here: numpy, pyproj and rasterio are slow to load for the BLE tools.
+    import numpy as np
+
+    from crt.route.pipeline import SOURCES, PipelineOptions, build_course
+
+    if source not in SOURCES:
+        raise typer.BadParameter(f"use one of {', '.join(SOURCES)}", param_hint="--source")
+    options = PipelineOptions(
+        source=source, spacing=spacing, smoothing=smoothing, fix_bridges=fix_bridges
+    )
+    with console.status("preparing the course (first run downloads elevation data) …"):
+        course = build_course(route_file, options)
+    output = output or route_file.with_suffix(".crt.npz")
+    course.save(output)
+
+    s, z = course.s, course.z
+    ahead = s <= course.length - 50
+    grade50 = (np.interp(s[ahead] + 50, s, z) - z[ahead]) / 50 * 100
+
+    def ascent(profile: np.ndarray) -> float:
+        d = np.diff(profile)
+        return float(d[d > 0].sum())
+
+    console.print(f"[bold]{course.name}[/]")
+    console.print(
+        f"  length:    {course.length / 1000:.2f} km ({len(s)} points every {spacing:g} m)"
+    )
+    other = f"raw DEM {ascent(course.z_raw):.0f} m"
+    if not np.isnan(course.z_file).all():
+        other += f", route file {ascent(course.z_file):.0f} m"
+    console.print(
+        f"  elevation: {z.min():.0f}–{z.max():.0f} m, ascent {course.total_ascent:.0f} m ({other})"
+    )
+    if grade50.size:
+        console.print(
+            f"  grade:     {grade50.max():+.1f} % / {grade50.min():+.1f} % (steepest 50 m)"
+        )
+    coverage = ", ".join(
+        f"{name} {share * 100:.1f} %"
+        for name, share in course.meta["elevation_coverage"].items()
+        if share > 0
+    )
+    console.print(f"  elevation sources: {coverage or 'route file only'}")
+    structures = course.meta["structures"]
+    if not course.meta["structures_checked"]:
+        console.print("  bridges/tunnels: [yellow]not checked[/]")
+    elif not structures:
+        console.print("  bridges/tunnels: none on the route")
+    for st in structures:
+        console.print(
+            f"  {st['kind']} {st['name'] or ''} at {st['s0'] / 1000:.2f}–{st['s1'] / 1000:.2f} km"
+        )
+    console.print(f"saved to {output}")
+
+    if plot or plot_file:
+        from crt.route.plot import plot_course
+
+        extra = {}
+        if compare:
+            from crt.elevation.copernicus import CopernicusGlo30
+
+            with console.status("sampling Copernicus GLO-30 …"):
+                extra["Copernicus GLO-30"] = CopernicusGlo30().sample(course.lat, course.lon)
+        plot_course(course, extra, plot_file)
+        if plot_file:
+            console.print(f"plot saved to {plot_file}")
 
 
 if __name__ == "__main__":

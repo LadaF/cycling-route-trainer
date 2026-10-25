@@ -108,38 +108,52 @@ cycling-route-trainer/
    bearing and curvature.
 4. **Sample the DEM** with bilinear interpolation, through an `ElevationProvider`
    interface:
-   * `CuzkDmr5g`: ČÚZK DMR 5G (terrain model from airborne lidar, decimetre accuracy).
-     The data has been open (CC BY 4.0) since 2023. It can be obtained through
-     ČÚZK download (ATOM) and web services such as the ArcGIS ImageServer. The exact
-     endpoints must be verified when this module is implemented. Tiles are cached
-     locally.
+   * `CuzkDmr5g`: ČÚZK DMR 5G (terrain model from airborne lidar, decimetre accuracy,
+     open data under CC BY 4.0). *Implemented:* the ArcGIS ImageServer
+     `https://ags.cuzk.gov.cz/arcgis/rest/services/3D/dmr5g/ImageServer` serves a 2 m
+     float32 grid in EPSG:5514. Its `getSamples` operation is forbidden (403), but
+     `exportImage` works. The provider downloads 500 m tiles aligned to the native
+     pixel grid (no resampling), with a one-pixel border so bilinear interpolation
+     never needs a neighbouring tile. About 0.25 s and 200 kB per tile; cached as
+     GeoTIFF. Outside Czechia the service returns 0, which is treated as no data.
    * `CuzkDmr4g` (5 m raster grid): a simpler fallback.
    * ZABAGED altimetry (contours and spot heights) is coarser than DMR 5G. It is only
      worth adding as an independent cross-check.
-   * `CopernicusGlo30`: Copernicus GLO-30 Cloud Optimized GeoTIFFs (COGs) on AWS Open
-     Data. Global coverage, generally better than SRTM.
-   * `Srtm`: SRTM 1″ as a last resort.
+   * `CopernicusGlo30`: Copernicus GLO-30 on AWS Open Data. *Implemented* as the
+     fallback outside Czechia: whole 1°×1° tiles are downloaded once and cached.
+     It is a *surface* model (partly includes trees and buildings), so it is
+     visibly noisier than DMR 5G on the same road.
+   * `Srtm`: SRTM 1″ as a last resort (not implemented; Copernicus is better).
    * The design is open to other national lidar DEMs (Slovak ZBGIS DMR 5.0, Austrian
      and German state DGM1).
-   * Raster reading uses `rasterio`, with windowed reads from COGs. The cache lives in
+   * Raster reading uses `rasterio`. The cache lives in
      `platformdirs.user_cache_dir("crt")`.
 5. **Fix bridges and tunnels.** A *terrain* model (DMR) has no bridges, so a viaduct
    reads as a dive into the valley and a tunnel as a climb over the hill. Fix:
    * Fetch the OSM ways `bridge=*` and `tunnel=*` along the route (Overpass API,
-     with `httpx`), or use the corresponding ZABAGED road objects.
+     with `httpx`), or use the corresponding ZABAGED road objects. *Implemented with
+     Overpass:* one attempt per route, result cached; if the public server fails
+     (it is often overloaded), the course is prepared without the correction and
+     marked as not checked. A more reliable source (ZABAGED, a local OSM extract)
+     can replace it later.
    * Map them to intervals of *s* and replace the elevation inside each interval with
      a linear interpolation between its end points. Allow manual intervals in the
      course editor as a fallback.
-6. **Smooth** the profile. Use a distance-based filter (Savitzky–Golay or Gaussian
-   from `scipy.signal`, about 20–50 m window) and an optional cap on the maximum
-   grade. Compute the grade as `dz/ds` from the smoothed profile.
-7. **Save a processed course** (`.crt.npz` or Parquet, plus a JSON metadata block
+6. **Smooth** the profile and compute the grade as `dz/ds`. *Implemented:* a
+   Gaussian with σ = 20 m (`scipy.ndimage`). On the example route, σ = 10 m left
+   point grades of +20 % / −15 %. They come from places where the GPS track strays
+   from a road cut into a hillside onto the bank above or below it; the terrain
+   model is right there, the position is not. At σ = 20 m the steepest point grade
+   (±11 %) is no larger than the steepest 50 m section of the σ = 10 m profile, and
+   the total ascent changes by under 1 %. Matching the track to the OSM road centreline would fix the cause; it is a
+   later improvement.
+7. **Save a processed course** (`.crt.npz`, plus a JSON metadata block
    recording the source, DEM provider, smoothing parameters and bridge intervals).
    Riding only ever loads this file.
 
 `Course` API, vectorised with `numpy`:
 `course.at(s) -> (lat, lon, z, grade, bearing)` and
-`course.grade_window(s0, s1) -> mean grade`. Both use
+`course.mean_grade(s0, s1)`, the exact mean `Δz/Δs`. Both use
 `np.searchsorted`/`np.interp` on the uniform grid.
 
 ## 6. Physics model
@@ -199,8 +213,9 @@ surface any errors.
 `ResistancePolicy` interface with these implementations:
 
 * **`SimulationGradePolicy`** (default), applied in this order:
-  1. *Lookahead*: `g_look = course.grade_window(s, s + v·t_lag)`. The value of
-     `t_lag` (≈ 1–2 s) compensates for the time the trainer's brake takes to respond.
+  1. *Lookahead*: `g_look = course.mean_grade(s, s + v·t_lag)`. The value of
+     `t_lag` compensates for the time the trainer's brake takes to respond. The H3
+     responded almost immediately in the control test, so the default is 1 s.
   2. *Difficulty scaling* (optional, as in other apps): `g = k · g_look`, with k ∈ [0, 1].
   3. **Minimum**: `g_cmd = max(g, g_min)`. The default `g_min` is 0 %. Setting it to,
      for example, +1.5 % keeps a firm feel on flats and descents.
