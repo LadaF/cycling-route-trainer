@@ -76,11 +76,20 @@ async def _connect(stack: contextlib.AsyncExitStack, target: str, label: str) ->
     console.print(f"looking for {label} [bold]{target}[/] …")
     device = await find_device(target)
 
+    closing = False
+
     def on_disconnect(_client: BleakClient) -> None:
-        console.print(f"[red]{label} {device.address} disconnected[/]")
+        if not closing:
+            console.print(f"[red]{label} {device.address} disconnected[/]")
+
+    def mark_closing() -> None:
+        nonlocal closing
+        closing = True
 
     client = BleakClient(device, disconnected_callback=on_disconnect)
     await stack.enter_async_context(client)
+    # Exit callbacks run in reverse order, so this runs before the client disconnects.
+    stack.callback(mark_closing)
     console.print(f"connected to {label} {device.name or ''} ({device.address})")
     return client
 
@@ -96,16 +105,18 @@ def scan_cmd(
     all_devices: Annotated[
         bool, typer.Option("--all", help="Also list devices without FTMS/CPS/HRS.")
     ] = False,
+    name: Annotated[
+        str | None,
+        typer.Option(help="Only devices whose name contains this (ignores case and accents)."),
+    ] = None,
 ) -> None:
     """List nearby BLE trainers, power meters and heart rate sensors."""
 
     async def run() -> None:
         with console.status(f"scanning for {timeout:g} s …"):
-            results = await scan(timeout, include_all=all_devices)
+            results = await scan(timeout, include_all=all_devices, name=name)
         if not results:
-            console.print(
-                "no devices found. Is the trainer awake and not connected to another app?"
-            )
+            console.print("no devices found. Is the device awake and not connected to another app?")
             return
         table = Table("name", "address", "RSSI", "services")
         for r in results:
@@ -278,7 +289,7 @@ def monitor_cmd(
 
             def on_hr(t: float, m: HeartRateMeasurement, raw_bytes: bytes) -> None:
                 stats["hr"].add(t)
-                latest["heart_rate_bpm (strap)"] = m.bpm
+                latest["heart_rate_bpm (HR sensor)"] = m.bpm
                 latest["sensor_contact"] = "n/a" if m.contact is None else str(m.contact)
                 if raw:
                     console.print(f"{t - t0:9.3f} hr      {raw_bytes.hex()}  {m}")

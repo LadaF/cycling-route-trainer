@@ -26,7 +26,7 @@ crt-tool control H3                    # interactive control point console
 ```
 
 In `control`, start with `request`, then `start`, then for example `grade 5`,
-`grade 0`, `erg 200` or `level 20`. `help` lists all commands. Each command prints
+`grade 0`, `erg 200` or `level 5`. `help` lists all commands. Each command prints
 the trainer's response, for example `SET_INDOOR_BIKE_SIMULATION: SUCCESS`.
 
 Only one app at a time can control a trainer. Close Zwift or phone apps first. On
@@ -41,5 +41,6 @@ Windows, do not pair the trainer in Windows Settings.
    the same time over the second connection.
 4. `crt-tool control H3`: run `request`, `start`, `grade 0`, `grade 8`, `grade 0`.
    The resistance should change noticeably within a couple of seconds.
-5. Try `level 20` and `levelw 20` to see which resistance encoding the H3 accepts.
-   This only matters for the fallback mode.
+5. Try `level 5` and `levelw 5` to see which resistance encoding the H3 accepts.
+   The H3 reports a resistance range of 0–10. This only matters for the fallback
+   mode.
