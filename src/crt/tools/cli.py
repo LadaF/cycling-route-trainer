@@ -575,5 +575,201 @@ def route_cmd(
             console.print(f"plot saved to {plot_file}")
 
 
+# ---------------------------------------------------------------------------
+# ride and replay
+# ---------------------------------------------------------------------------
+
+
+def _hms(seconds: float) -> str:
+    seconds = int(seconds)
+    return f"{seconds // 3600}:{seconds // 60 % 60:02d}:{seconds % 60:02d}"
+
+
+def _load_course(path: Path):
+    from crt.route.course import Course
+    from crt.route.pipeline import build_course
+
+    if path.name.endswith(".crt.npz"):
+        return Course.load(path)
+    with console.status("preparing the course with default settings …"):
+        return build_course(path)
+
+
+def _ride_table(snap, course_name: str) -> Table:
+    from crt.session.session import describe_command
+
+    table = Table(title=f"{course_name} — {snap.state.value}", show_header=False, min_width=48)
+    table.add_column(style="dim")
+    table.add_column(justify="right", style="bold")
+    trainer = "[green]connected[/]" if snap.trainer_connected else "[red]connecting …[/]"
+    table.add_row("trainer", trainer)
+    table.add_row("time", _hms(snap.elapsed))
+    table.add_row("distance", f"{snap.s / 1000:.2f} km  ({snap.remaining / 1000:.2f} km to go)")
+    table.add_row("speed", f"{snap.v * 3.6:.1f} km/h")
+    table.add_row("power", f"{snap.power:.0f} W")
+    if snap.cadence is not None:
+        table.add_row("cadence", f"{snap.cadence:.0f} rpm")
+    if snap.heart_rate is not None or snap.hr_connected:
+        table.add_row("heart rate", "–" if snap.heart_rate is None else f"{snap.heart_rate} bpm")
+    table.add_row("terrain grade", f"{snap.terrain_grade:+.1f} %")
+    table.add_row("trainer setting", describe_command(snap.command))
+    table.add_row("elevation", f"{snap.elevation:.0f} m  (+{snap.ascent:.0f} m)")
+    if snap.trainer_speed_kmh is not None:
+        table.add_row("[dim]trainer speed[/]", f"[dim]{snap.trainer_speed_kmh:.1f} km/h[/]")
+    return table
+
+
+def _summary(snap, course) -> None:
+    avg_speed = snap.s / snap.moving_time * 3.6 if snap.moving_time > 0 else 0.0
+    avg_power = snap.work / snap.elapsed if snap.elapsed > 0 else 0.0
+    console.print(f"[bold]{course.name}[/]: {snap.state.value}")
+    console.print(f"  distance {snap.s / 1000:.2f} of {course.length / 1000:.2f} km")
+    console.print(f"  time {_hms(snap.elapsed)}, moving {_hms(snap.moving_time)}")
+    console.print(f"  average speed {avg_speed:.1f} km/h, average power {avg_power:.0f} W")
+    console.print(
+        f"  ascent {snap.ascent:.0f} m, work {snap.work / 1000:.0f} kJ"
+        + (f", braked {snap.braking / 1000:.0f} kJ" if snap.braking > 0 else "")
+    )
+
+
+@app.command("ride")
+def ride_cmd(
+    course_file: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="Course (.crt.npz) or route file.")
+    ],
+    trainer: Annotated[str | None, typer.Option(help="Trainer address or name.")] = None,
+    hr: Annotated[str | None, typer.Option(help="Heart rate sensor address or name.")] = None,
+    mock_power: Annotated[
+        float | None, typer.Option(help="No hardware: simulated rider at this power [W].")
+    ] = None,
+    mock_csv: Annotated[
+        Path | None, typer.Option(help="No hardware: power profile CSV (time_s,power_w).")
+    ] = None,
+    speedup: Annotated[float, typer.Option(help="Time acceleration (simulated rider only).")] = 1.0,
+    min_grade: Annotated[float, typer.Option(help="Minimum grade sent to the trainer [%].")] = 0.0,
+    difficulty: Annotated[float, typer.Option(help="Scale of the terrain grade, 0–1.")] = 1.0,
+    lookahead: Annotated[float, typer.Option(help="Grade lookahead [s].")] = 1.0,
+    rider_mass: Annotated[float, typer.Option(help="Rider mass [kg].")] = 75.0,
+    bike_mass: Annotated[float, typer.Option(help="Bike mass [kg].")] = 9.0,
+    cda: Annotated[float, typer.Option(help="Drag area CdA [m²].")] = 0.32,
+    crr: Annotated[float, typer.Option(help="Rolling resistance coefficient.")] = 0.004,
+    temperature: Annotated[float, typer.Option(help="Air temperature [°C].")] = 20.0,
+    max_speed: Annotated[float, typer.Option(help="Virtual braking above this [km/h].")] = 60.0,
+    start_km: Annotated[float, typer.Option(help="Start this far along the course [km].")] = 0.0,
+    log_path: Annotated[
+        Path | None, typer.Option("--log", help="Ride log CSV (default: user data directory).")
+    ] = None,
+) -> None:
+    """Ride a course: trainer resistance from the terrain, speed from the physics."""
+    import datetime
+    from dataclasses import asdict
+
+    import platformdirs
+
+    from crt.control.policy import ControlSettings, GradePolicy, LevelPolicy
+    from crt.devices.connection import BleHeartRate, BleTrainer
+    from crt.devices.mock import MockTrainer, constant_power, power_from_csv
+    from crt.physics.model import RiderParams
+    from crt.session.log import RideLog
+    from crt.session.runner import Clock, RideRunner
+    from crt.session.session import RideSession
+
+    simulated = mock_power is not None or mock_csv is not None
+    if simulated == (trainer is not None):
+        raise typer.BadParameter("give either --trainer or --mock-power / --mock-csv")
+    if speedup != 1.0 and not simulated:
+        raise typer.BadParameter(
+            "only a simulated rider can be accelerated", param_hint="--speedup"
+        )
+
+    course = _load_course(course_file)
+    rider = RiderParams(
+        rider_mass=rider_mass, bike_mass=bike_mass, cda=cda, crr=crr,
+        temperature_c=temperature, max_speed=max_speed / 3.6,
+    )  # fmt: skip
+    settings = ControlSettings(min_grade=min_grade, difficulty=difficulty, lookahead_s=lookahead)
+    start_s = start_km * 1000
+
+    if log_path is None:
+        rides = Path(platformdirs.user_data_dir("crt")) / "rides"
+        rides.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        log_path = rides / f"{stamp}.csv"
+    header = {
+        "course": str(course_file.resolve()), "course_name": course.name,
+        "trainer": trainer or "simulated", "started": datetime.datetime.now().isoformat(),
+        "start_s": start_s, "rider": asdict(rider), "control": asdict(settings),
+    }  # fmt: skip
+
+    async def run() -> None:
+        clock = Clock(speedup)
+        ride_log = RideLog(log_path, header)
+        session = RideSession(course, rider, GradePolicy(course, settings, rider), start_s=start_s)
+        runner = RideRunner(session, clock, ride_log)
+        if simulated:
+            power = constant_power(mock_power) if mock_csv is None else power_from_csv(mock_csv)
+            device = MockTrainer(
+                power, clock.now, clock.sleep, runner.trainer_sample, runner.trainer_connection
+            )
+        else:
+            device = BleTrainer(
+                trainer, clock.now, runner.trainer_sample, runner.trainer_connection
+            )
+        hr_device = (
+            BleHeartRate(hr, clock.now, runner.hr_sample, runner.hr_connection) if hr else None
+        )
+
+        def update(snap) -> None:
+            # Switch to the fallback policy once the trainer reports no simulation mode.
+            if not device.supports_simulation and not isinstance(session.policy, LevelPolicy):
+                session.policy = LevelPolicy(course, settings, rider)
+                console.print("[yellow]trainer has no simulation mode: using resistance levels[/]")
+            live.update(_ride_table(snap, course.name))
+
+        try:
+            with Live(_ride_table(session.snapshot(), course.name), console=console) as live:
+                snap = await runner.run(device, hr_device, on_update=update)
+        finally:
+            ride_log.close()
+            console.print(f"ride log: {log_path}")
+        _summary(snap, course)
+
+    _run(run())
+
+
+@app.command("replay")
+def replay_cmd(
+    log_file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="Ride log CSV.")],
+    course_file: Annotated[
+        Path | None, typer.Option("--course", help="Course, if not the one in the log.")
+    ] = None,
+) -> None:
+    """Re-run the physics over the power recorded in a ride log."""
+    from crt.control.policy import ControlSettings, GradePolicy
+    from crt.physics.model import RiderParams
+    from crt.session.log import read_log
+    from crt.session.runner import replay
+    from crt.session.session import RideSession
+
+    header, samples, states = read_log(log_file)
+    if not samples:
+        console.print("the log has no trainer samples")
+        raise typer.Exit(1)
+    course = _load_course(course_file or Path(header["course"]))
+    rider = RiderParams(**header["rider"])
+    settings = ControlSettings(**header["control"])
+    session = RideSession(
+        course, rider, GradePolicy(course, settings, rider), start_s=header.get("start_s", 0.0)
+    )
+    snap = replay(session, samples, until=float(states[-1]["t"]) if states else None)
+    _summary(snap, course)
+    if states:
+        logged = float(states[-1]["s_m"])
+        console.print(
+            f"  logged distance {logged / 1000:.3f} km, replayed {snap.s / 1000:.3f} km "
+            f"(difference {snap.s - logged:+.1f} m)"
+        )
+
+
 if __name__ == "__main__":
     app()

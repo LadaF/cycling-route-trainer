@@ -191,6 +191,11 @@ ds/dt = v
 * Default parameters: rider 75 kg, bike 9 kg, CdA 0.32 m², Crr 0.004,
   T = 20 °C, no wind.
 
+*Implemented note:* at a standstill the energy equation has no gravity term
+(`v·F = 0`), so the rider would never start rolling down a slope without pedalling.
+When `v = 0` and gravity overcomes rolling resistance, one explicit step in velocity
+form starts the motion.
+
 The engine is a pure function `step(state, P, dt, course, params) -> state`, so it can
 be unit-tested against analytic steady-state speeds and against a reference
 `scipy.integrate.solve_ivp` solution.

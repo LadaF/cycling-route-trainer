@@ -3,7 +3,7 @@
 Ride real routes on an FTMS smart trainer, with resistance from the terrain grade and
 speed from your own physics model. See [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: phase 2. BLE diagnostic tools and route preparation (`crt-tool route`) work.
+Status: phase 3. BLE diagnostic tools, route preparation and headless rides work.
 
 ## Setup
 
@@ -52,6 +52,24 @@ crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge q
 Elevation data: © ČÚZK (CC BY 4.0); Copernicus DEM © DLR e.V., © Airbus Defence and
 Space GmbH, provided under COPERNICUS by the European Union and ESA. Bridges and
 tunnels: © OpenStreetMap contributors (ODbL).
+
+## Riding (headless)
+
+```sh
+crt-tool ride ride.crt.npz --trainer "Hammer 50414" --hr fenix --min-grade 1
+crt-tool ride ride.crt.npz --mock-power 200 --speedup 20   # no hardware
+crt-tool replay ~/.local/share/crt/rides/2026-10-25_215225.csv
+```
+
+* The trainer gets the terrain grade 1 s ahead (`--lookahead`), scaled by
+  `--difficulty`, never below `--min-grade`, at most twice a second.
+* Speed comes only from the power and the physics (`--rider-mass`, `--bike-mass`,
+  `--cda`, `--crr`, `--temperature`); `--max-speed` (default 60 km/h) acts as
+  virtual braking.
+* If the trainer disconnects, the ride pauses and resumes after it reconnects.
+  Power older than 3 s counts as zero. Ctrl-C ends the ride.
+* Every ride writes a log (user data directory, or `--log`): all samples, commands
+  and the state at 1 Hz. `replay` re-runs the physics over the recorded power.
 
 ## Hardware checklist (phase 1)
 
