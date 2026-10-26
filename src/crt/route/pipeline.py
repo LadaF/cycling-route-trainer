@@ -42,6 +42,7 @@ class PipelineOptions:
     # where the GPS track strays from the road onto a cutting or embankment.
     smoothing: float = 20.0
     fix_bridges: bool = True  # needs the public Overpass API; skipped if it fails
+    overpass_timeout: float = 5.0  # s; a slow Overpass would hold up opening a route
 
 
 def providers_for(source: str) -> list[ElevationProvider]:
@@ -100,7 +101,7 @@ def build_course(
     structures_checked = False
     if options.fix_bridges and options.source != "file":
         try:
-            structures = bridges.fetch_structures(lat, lon, x, y)
+            structures = bridges.fetch_structures(lat, lon, x, y, timeout=options.overpass_timeout)
             intervals = bridges.match_intervals(s, x, y, bearing, structures, projection)
             structures_checked = True
         except (httpx.HTTPError, ValueError) as exc:
@@ -119,3 +120,23 @@ def build_course(
         "structures": [iv.to_json() for iv in intervals],
     }
     return Course(raw.name, s, lat, lon, z_final, grade, bearing, z_raw, z_file, meta)
+
+
+def prepared_course(path: Path, options: PipelineOptions | None = None) -> tuple[Course, Path]:
+    """The course for ``path``, and the file it is kept in.
+
+    A ``.crt.npz`` file is loaded as it is. A route file is prepared once and the
+    course saved next to it; that file is reused while it is newer than the route.
+    """
+    if path.name.endswith(".crt.npz"):
+        return Course.load(path), path
+    saved = path.with_suffix(".crt.npz")
+    if saved.exists() and saved.stat().st_mtime >= path.stat().st_mtime:
+        return Course.load(saved), saved
+    course = build_course(path, options)
+    try:
+        course.save(saved)
+    except OSError as exc:
+        log.warning("cannot save the prepared course: %s", exc)
+        return course, path
+    return course, saved

@@ -145,23 +145,21 @@ class RideWindow(QMainWindow):
             asyncio.ensure_future(self.open_course(Path(name)))
 
     async def open_course(self, path: Path) -> None:
-        if path.name.endswith(".crt.npz"):
-            course = Course.load(path)
-        else:
-            from crt.route.pipeline import build_course
+        """Open a course, or prepare a route and keep the course next to it."""
+        from crt.route.pipeline import prepared_course
 
-            self.statusBar().showMessage(f"preparing {path.name} …")
-            self.open_action.setEnabled(False)
-            try:
-                course = await asyncio.to_thread(build_course, path)
-            except Exception as exc:
-                log.exception("cannot prepare %s", path)
-                QMessageBox.warning(self, "Open course", f"Cannot prepare {path.name}:\n{exc}")
-                return
-            finally:
-                self.open_action.setEnabled(True)
-                self.statusBar().clearMessage()
-        self.set_course(course, path)
+        self.statusBar().showMessage(f"opening {path.name} …")
+        self.open_action.setEnabled(False)
+        try:
+            course, course_file = await asyncio.to_thread(prepared_course, path)
+        except Exception as exc:
+            log.exception("cannot open %s", path)
+            QMessageBox.warning(self, "Open course", f"Cannot open {path.name}:\n{exc}")
+            return
+        finally:
+            self.open_action.setEnabled(True)
+            self.statusBar().clearMessage()
+        self.set_course(course, course_file)
 
     def set_course(self, course: Course, path: Path) -> None:
         self.course, self.course_file = course, path

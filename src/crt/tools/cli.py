@@ -498,6 +498,9 @@ def route_cmd(
             help="Correct bridges and tunnels from OpenStreetMap (skipped if Overpass fails).",
         ),
     ] = True,
+    overpass_timeout: Annotated[
+        float, typer.Option(help="Give up on Overpass after this long [s].")
+    ] = 5.0,
     plot: Annotated[bool, typer.Option(help="Show the elevation and grade profile.")] = False,
     plot_file: Annotated[
         Path | None, typer.Option(help="Save the profile plot (PNG, PDF, SVG).")
@@ -515,8 +518,9 @@ def route_cmd(
     if source not in SOURCES:
         raise typer.BadParameter(f"use one of {', '.join(SOURCES)}", param_hint="--source")
     options = PipelineOptions(
-        source=source, spacing=spacing, smoothing=smoothing, fix_bridges=fix_bridges
-    )
+        source=source, spacing=spacing, smoothing=smoothing, fix_bridges=fix_bridges,
+        overpass_timeout=overpass_timeout,
+    )  # fmt: skip
     with console.status("preparing the course (first run downloads elevation data) …"):
         course = build_course(route_file, options)
     output = output or route_file.with_suffix(".crt.npz")
@@ -581,13 +585,10 @@ def route_cmd(
 
 
 def _load_course(path: Path):
-    from crt.route.course import Course
-    from crt.route.pipeline import build_course
+    from crt.route.pipeline import prepared_course
 
-    if path.name.endswith(".crt.npz"):
-        return Course.load(path)
-    with console.status("preparing the course with default settings …"):
-        return build_course(path)
+    with console.status("preparing the course …"):
+        return prepared_course(path)[0]
 
 
 def _ride_table(snap, course_name: str) -> Table:

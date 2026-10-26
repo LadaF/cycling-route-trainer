@@ -217,3 +217,44 @@ def test_read_fit_course(tmp_path):
     assert r.lon == pytest.approx([14.44, 14.441, 14.442], abs=1e-7)
     assert r.ele[0] == pytest.approx(300.0) and np.isnan(r.ele[1])
     assert r.ele[2] == pytest.approx(290.4)
+
+
+def test_prepared_course_is_saved_and_reused(tmp_path, monkeypatch, make_course):
+    import os
+
+    from crt.route import pipeline
+
+    builds = []
+
+    def fake_build(path, options=None):
+        builds.append(path)
+        return make_course(length=100.0)
+
+    monkeypatch.setattr(pipeline, "build_course", fake_build)
+    route = tmp_path / "ride.gpx"
+    route.write_text("<gpx/>")
+
+    course, kept = pipeline.prepared_course(route)
+    assert kept == tmp_path / "ride.crt.npz" and kept.exists() and len(builds) == 1
+    course, kept = pipeline.prepared_course(route)  # reused
+    assert len(builds) == 1 and course.length == pytest.approx(100.0)
+    assert pipeline.prepared_course(kept)[1] == kept  # a course file is loaded as it is
+
+    later = kept.stat().st_mtime + 10
+    os.utime(route, (later, later))  # the route was edited: prepare it again
+    pipeline.prepared_course(route)
+    assert len(builds) == 2
+
+
+def test_overpass_timeout_reaches_server_and_client(tmp_path, monkeypatch):
+    from crt.elevation import bridges
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        bridges, "_query_overpass", lambda query, timeout: calls.append((query, timeout)) or {}
+    )
+    x = np.array([0.0, 100.0])
+    bridges.fetch_structures(np.array([50.0, 50.001]), np.array([14.0, 14.0]), x, x, timeout=4.5)
+    ((query, timeout),) = calls
+    assert timeout == 4.5 and "[timeout:5]" in query

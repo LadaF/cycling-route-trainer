@@ -18,7 +18,7 @@ python3.12 -m venv .venv          # Windows: py -3.12 -m venv .venv
 
 ```sh
 crt-gui                       # opens the last course
-crt-gui ride.crt.npz          # or a GPX/TCX/FIT route, prepared with default settings
+crt-gui ride.crt.npz          # or a GPX/TCX/FIT route: prepared once, kept as ride.crt.npz
 crt-gui --mock-power 220 --speedup 10   # no hardware
 crt-gui --no-web-map          # plain track instead of the OpenStreetMap map
 ```
@@ -65,8 +65,11 @@ crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge q
   elsewhere. `--source file` uses the elevations in the route file. Downloaded data
   is cached in the user cache directory (`~/.cache/crt` on Linux).
 * **Bridges and tunnels:** taken from OpenStreetMap through the public Overpass API,
-  one attempt per route. If it fails, the course is prepared without this correction
-  and the summary says `not checked`.
+  one attempt per route, given up after 5 s (`--overpass-timeout`). If it fails, the
+  course is prepared without this correction and the summary says `not checked`.
+  Opening a route in `crt-gui` or `crt-tool ride` keeps the prepared course next to
+  it and reuses it while it is newer than the route; run `crt-tool route` again (for
+  example with `--overpass-timeout 60`) to redo it.
 * **Smoothing:** a 20 m Gaussian removes the steps that appear where the GPS track
   strays from the road onto a cutting or embankment.
 

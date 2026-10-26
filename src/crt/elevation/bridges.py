@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from dataclasses import asdict, dataclass
 
 import httpx
@@ -68,10 +69,12 @@ def simplify(x: np.ndarray, y: np.ndarray, tolerance: float) -> np.ndarray:
     return np.flatnonzero(keep)
 
 
-def _query_overpass(query: str) -> dict:
+def _query_overpass(query: str, timeout: float) -> dict:
     """One attempt only: the public server is often overloaded, and the pipeline then
     simply continues without the correction."""
-    response = httpx.post(OVERPASS_URL, data={"data": query}, headers=HEADERS, timeout=90.0)
+    response = httpx.post(
+        OVERPASS_URL, data={"data": query}, headers=HEADERS, timeout=httpx.Timeout(timeout)
+    )
     response.raise_for_status()
     result = response.json()
     if "remark" in result and not result.get("elements"):
@@ -81,13 +84,18 @@ def _query_overpass(query: str) -> dict:
 
 
 def fetch_structures(
-    lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray, *, radius: float = 25.0
-) -> list[Structure]:
-    """Road bridges and tunnels within ``radius`` metres of the route, from Overpass."""
+    lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray, *, radius: float = 25.0,
+    timeout: float = 5.0,
+) -> list[Structure]:  # fmt: skip
+    """Road bridges and tunnels within ``radius`` metres of the route, from Overpass.
+
+    ``timeout`` bounds each network step of the request and, rounded up, the query on
+    the server, so the server does not keep working after we give up.
+    """
     idx = simplify(x, y, tolerance=5.0)
     line = ",".join(f"{lat[i]:.6f},{lon[i]:.6f}" for i in idx)
     query = (
-        "[out:json][timeout:120];"
+        f"[out:json][timeout:{math.ceil(timeout)}];"
         f'(way["highway"]["bridge"]["bridge"!="no"](around:{radius:g},{line});'
         f'way["highway"]["tunnel"]["tunnel"!="no"](around:{radius:g},{line}););'
         "out tags geom;"
@@ -97,7 +105,7 @@ def fetch_structures(
         result = json.loads(cache.read_text())
     else:
         log.info("querying Overpass for bridges and tunnels (%d route vertices)", len(idx))
-        result = _query_overpass(query)
+        result = _query_overpass(query, timeout)
         cache.write_text(json.dumps(result))
 
     structures = []
