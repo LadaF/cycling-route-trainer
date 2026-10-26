@@ -1,4 +1,5 @@
 import asyncio
+import csv
 
 import pytest
 
@@ -152,3 +153,40 @@ async def test_runner_rides_with_mock_trainer(make_course):
     assert snap.state is RideState.FINISHED
     assert snap.s == 400.0
     assert trainer.commands and trainer.last_grade == pytest.approx(1.0)
+
+
+async def test_runner_pause_resume_and_stop_are_logged(make_course, tmp_path):
+    course = make_course(length=5000.0)
+    clock = FastClock()
+    session = session_for(course)
+    log = RideLog(tmp_path / "ride.csv", {"course": "x", "start_s": 0.0})
+    runner = RideRunner(session, clock, log)
+    trainer = MockTrainer(
+        constant_power(250.0), clock.now, clock.sleep, runner.trainer_sample,
+        runner.trainer_connection,
+    )  # fmt: skip
+
+    def rider(snap) -> None:
+        if snap.elapsed >= 30 and not runner_paused:
+            runner_paused.append(clock.now())
+            runner.pause()
+        elif runner_paused and len(runner_paused) == 1 and clock.now() >= runner_paused[0] + 10:
+            runner_paused.append(clock.now())
+            runner.resume()
+        elif len(runner_paused) == 2 and snap.elapsed >= 60:
+            runner.stop()
+
+    runner_paused: list[float] = []
+    snap = await asyncio.wait_for(runner.run(trainer, on_update=rider), timeout=30)
+    log.close()
+    assert snap.state is RideState.RIDING and 0 < snap.s < 5000
+    assert snap.elapsed == pytest.approx(60, abs=2)  # the 10 s pause does not count
+    events = [r["command"] for r in csv.DictReader(_skip_header(tmp_path / "ride.csv"))
+              if r["kind"] == "event"]  # fmt: skip
+    assert events == ["trainer connected", "start", "paused", "resumed", "stop"]
+
+
+def _skip_header(path):
+    f = path.open(encoding="utf-8")
+    f.readline()
+    return f

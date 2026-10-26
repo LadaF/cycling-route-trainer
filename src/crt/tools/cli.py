@@ -580,11 +580,6 @@ def route_cmd(
 # ---------------------------------------------------------------------------
 
 
-def _hms(seconds: float) -> str:
-    seconds = int(seconds)
-    return f"{seconds // 3600}:{seconds // 60 % 60:02d}:{seconds % 60:02d}"
-
-
 def _load_course(path: Path):
     from crt.route.course import Course
     from crt.route.pipeline import build_course
@@ -597,13 +592,14 @@ def _load_course(path: Path):
 
 def _ride_table(snap, course_name: str) -> Table:
     from crt.session.session import describe_command
+    from crt.session.summary import hms
 
     table = Table(title=f"{course_name} — {snap.state.value}", show_header=False, min_width=48)
     table.add_column(style="dim")
     table.add_column(justify="right", style="bold")
     trainer = "[green]connected[/]" if snap.trainer_connected else "[red]connecting …[/]"
     table.add_row("trainer", trainer)
-    table.add_row("time", _hms(snap.elapsed))
+    table.add_row("time", hms(snap.elapsed))
     table.add_row("distance", f"{snap.s / 1000:.2f} km  ({snap.remaining / 1000:.2f} km to go)")
     table.add_row("speed", f"{snap.v * 3.6:.1f} km/h")
     table.add_row("power", f"{snap.power:.0f} W")
@@ -620,31 +616,23 @@ def _ride_table(snap, course_name: str) -> Table:
 
 
 def _summary(snap, course) -> None:
-    avg_speed = snap.s / snap.moving_time * 3.6 if snap.moving_time > 0 else 0.0
-    avg_power = snap.work / snap.elapsed if snap.elapsed > 0 else 0.0
+    from crt.session.summary import summary_lines
+
     console.print(f"[bold]{course.name}[/]: {snap.state.value}")
-    console.print(f"  distance {snap.s / 1000:.2f} of {course.length / 1000:.2f} km")
-    console.print(f"  time {_hms(snap.elapsed)}, moving {_hms(snap.moving_time)}")
-    console.print(f"  average speed {avg_speed:.1f} km/h, average power {avg_power:.0f} W")
-    console.print(
-        f"  ascent {snap.ascent:.0f} m, work {snap.work / 1000:.0f} kJ"
-        + (f", braked {snap.braking / 1000:.0f} kJ" if snap.braking > 0 else "")
-    )
+    for line in summary_lines(snap, course.length):
+        console.print(f"  {line}")
 
 
 def _export(log_file: Path, formats: list[str], course=None) -> None:
     """Write the ride in each format next to its log."""
-    from crt.record.fit import write_fit
-    from crt.record.gpx import write_gpx
-    from crt.record.track import track_from_log
+    from crt.record.export import export_ride
     from crt.session.log import read_rows
 
-    header, rows = read_rows(log_file)
-    track = track_from_log(header, rows, course or _load_course(Path(header["course"])))
-    for fmt in formats:
-        path = log_file.with_suffix(f".{fmt}")
-        (write_fit if fmt == "fit" else write_gpx)(track, path)
-        console.print(f"{fmt.upper()}: {path}")
+    if course is None:
+        header, _rows = read_rows(log_file)
+        course = _load_course(Path(header["course"]))
+    for path in export_ride(log_file, formats, course):
+        console.print(f"{path.suffix[1:].upper()}: {path}")
 
 
 @app.command("ride")
@@ -676,16 +664,11 @@ def ride_cmd(
     ] = None,
 ) -> None:
     """Ride a course: trainer resistance from the terrain, speed from the physics."""
-    import datetime
-    from dataclasses import asdict
-
-    import platformdirs
-
-    from crt.control.policy import ControlSettings, GradePolicy, LevelPolicy
+    from crt.control.policy import ControlSettings, GradePolicy
     from crt.devices.connection import BleHeartRate, BleTrainer
     from crt.devices.mock import MockTrainer, constant_power, power_from_csv
     from crt.physics.model import RiderParams
-    from crt.session.log import RideLog
+    from crt.session.log import RideLog, default_log_path, ride_header
     from crt.session.runner import Clock, RideRunner
     from crt.session.session import RideSession
 
@@ -705,16 +688,8 @@ def ride_cmd(
     settings = ControlSettings(min_grade=min_grade, difficulty=difficulty, lookahead_s=lookahead)
     start_s = start_km * 1000
 
-    if log_path is None:
-        rides = Path(platformdirs.user_data_dir("crt")) / "rides"
-        rides.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        log_path = rides / f"{stamp}.csv"
-    header = {
-        "course": str(course_file.resolve()), "course_name": course.name,
-        "trainer": trainer or "simulated", "started": datetime.datetime.now().isoformat(),
-        "start_s": start_s, "rider": asdict(rider), "control": asdict(settings),
-    }  # fmt: skip
+    log_path = log_path or default_log_path()
+    header = ride_header(course_file, course.name, trainer or "simulated", start_s, rider, settings)
 
     async def run() -> None:
         clock = Clock(speedup)
@@ -735,10 +710,6 @@ def ride_cmd(
         )
 
         def update(snap) -> None:
-            # Switch to the fallback policy once the trainer reports no simulation mode.
-            if not device.supports_simulation and not isinstance(session.policy, LevelPolicy):
-                session.policy = LevelPolicy(course, settings, rider)
-                console.print("[yellow]trainer has no simulation mode: using resistance levels[/]")
             live.update(_ride_table(snap, course.name))
 
         try:

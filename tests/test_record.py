@@ -25,14 +25,14 @@ def state(t, s, v=5.0, power=200.0, hr="140"):
 
 @pytest.fixture
 def rows():
-    """20 s riding, a 10 s trainer disconnect, 10 s more riding."""
+    """20 s riding, a 10 s pause, 10 s more riding."""
     rows = [state(0.0, 100.0, v=0.0), row(0.5, "event", command="start")]
     for i in range(21):
         rows.append(row(i + 0.9, "sample", power_w="200", cadence_rpm="90"))
         rows.append(state(i + 1.0, 100.0 + 5 * i))
-    rows.append(row(21.5, "event", command="trainer disconnected"))
+    rows.append(row(21.5, "event", command="paused"))
     rows += [state(22.0 + i, 200.0, v=0.0, power=0.0) for i in range(10)]
-    rows.append(row(31.5, "event", command="trainer connected"))
+    rows.append(row(31.5, "event", command="resumed"))
     for i in range(11):
         rows.append(state(32.0 + i, 200.0 + 5 * i))
     rows.append(row(42.5, "event", command="finish"))

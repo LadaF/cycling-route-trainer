@@ -77,9 +77,9 @@ class Track:
 def track_from_log(header: dict, rows: list[dict], course: Course) -> Track:
     """Build the track from a ride log (see ``crt.session.log.read_rows``).
 
-    Only the riding part is kept: from the start event to the finish, without the
-    pauses caused by a lost trainer connection. Cadence comes from the latest trainer
-    sample, everything else from the 1 Hz state rows.
+    Only the riding part is kept: from the start event to the finish (or stop),
+    without pauses. Cadence comes from the latest trainer sample, everything else
+    from the 1 Hz state rows.
     """
     started = datetime.datetime.fromisoformat(header["started"]).astimezone(datetime.UTC)
     start_s = header.get("start_s", 0.0)
@@ -100,11 +100,11 @@ def track_from_log(header: dict, rows: list[dict], course: Course) -> Track:
             text = row["command"]
             if text == "start":
                 riding = True
-            elif text == "finish":
+            elif text in ("finish", "stop"):
                 break
-            elif text == "trainer disconnected" and riding and paused_at is None:
+            elif text == "paused" and riding:
                 paused_at = t
-            elif text == "trainer connected" and paused_at is not None:
+            elif text == "resumed" and paused_at is not None:
                 pauses.append((at(paused_at), at(t)))
                 paused_at = None
         elif kind == "state" and riding and paused_at is None:

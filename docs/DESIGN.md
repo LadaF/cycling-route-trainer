@@ -374,7 +374,9 @@ very long routes or point clouds ever becomes slow, the candidates are vectorise
 ## 13. Configuration
 
 TOML files in `platformdirs.user_config_dir("crt")`, read with `tomllib` and written
-with `tomli-w`, validated with `pydantic`:
+with `tomli-w`. v1 keeps a single `settings.toml` (devices, rider, control, last
+course) loaded into dataclasses; unknown keys are ignored. Later, possibly split
+into:
 
 * `rider.toml` / `bikes/*.toml`
 * `devices.toml` (last-used addresses, per-device η and calibration)

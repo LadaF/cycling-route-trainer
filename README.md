@@ -3,7 +3,8 @@
 Ride real routes on an FTMS smart trainer, with resistance from the terrain grade and
 speed from your own physics model. See [docs/DESIGN.md](docs/DESIGN.md).
 
-Status: phase 3. BLE diagnostic tools, route preparation and headless rides work.
+Status: phase 5. Rides work in the GUI and headless, on the Saris H3, with FIT
+export to Garmin Connect.
 
 ## Setup
 
@@ -12,6 +13,26 @@ python3.12 -m venv .venv          # Windows: py -3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]' # Windows: .venv\Scripts\pip install -e .[dev]
 .venv/bin/pytest
 ```
+
+## Riding (GUI)
+
+```sh
+crt-gui                       # opens the last course
+crt-gui ride.crt.npz          # or a GPX/TCX/FIT route, prepared with default settings
+crt-gui --mock-power 220 --speedup 10   # no hardware
+crt-gui --no-web-map          # plain track instead of the OpenStreetMap map
+```
+
+Set the trainer (e.g. `Hammer 50414`), the heart rate sensor and your mass in
+*Settings*. They are kept in `settings.toml` in the user config directory. *Start*
+connects and the ride starts as soon as the trainer is connected; *Space* pauses and
+resumes; *Stop* ends the ride. The FIT file is written next to the ride log.
+
+The window shows power (3 s average), cadence (5 s median, for display only; the log
+and the FIT keep the sensor values), heart rate, simulated speed, terrain grade with
+the grade sent to the trainer (marked when the minimum grade holds it up), distance,
+time and elevation. The profile shows the next 2 km coloured by grade. Map tiles come
+from OpenStreetMap and are cached; without network a plain track is shown.
 
 ## Diagnostic tools
 

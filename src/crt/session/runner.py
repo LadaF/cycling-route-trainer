@@ -8,10 +8,10 @@ import logging
 import time
 from collections.abc import Callable
 
-from crt.control.policy import Command
+from crt.control.policy import Command, LevelPolicy
 from crt.devices.base import HeartRateSample, Trainer, TrainerSample
 from crt.session.log import RideLog
-from crt.session.session import RideSession, RideSnapshot
+from crt.session.session import RideSession, RideSnapshot, RideState
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +41,19 @@ class RideRunner:
         self.log = ride_log
         self._pending: Command | None = None
         self._wake = asyncio.Event()
+        self._stop = False
+        self._state = session.state
+
+    def _note_state(self, now: float) -> None:
+        """Log pauses and resumptions, whatever caused them, so exports can leave
+        the paused time out."""
+        state = self.session.state
+        if self.log and state is not self._state:
+            if state is RideState.PAUSED:
+                self.log.event(now, "paused")
+            elif self._state is RideState.PAUSED and state is RideState.RIDING:
+                self.log.event(now, "resumed")
+        self._state = state
 
     # -- device callbacks -----------------------------------------------------
 
@@ -54,6 +67,7 @@ class RideRunner:
         self.session.set_trainer_connected(up, now)
         if self.log:
             self.log.event(now, f"trainer {'connected' if up else 'disconnected'}")
+        self._note_state(now)
 
     def hr_sample(self, sample: HeartRateSample) -> None:
         self.session.add_heart_rate(sample)
@@ -65,7 +79,32 @@ class RideRunner:
         if self.log:
             self.log.event(self.clock.now(), f"heart rate {'connected' if up else 'disconnected'}")
 
+    # -- rider controls -------------------------------------------------------
+
+    def pause(self) -> None:
+        now = self.clock.now()
+        self.session.pause(now)
+        self._note_state(now)
+
+    def resume(self) -> None:
+        now = self.clock.now()
+        self.session.resume(now)
+        self._note_state(now)
+
+    def stop(self) -> None:
+        """End the ride before the finish; ``run`` then returns as usual."""
+        self._stop = True
+
     # -- loops ----------------------------------------------------------------
+
+    def _check_simulation_support(self, trainer: Trainer, now: float) -> None:
+        """Switch to resistance levels once the trainer reports no simulation mode."""
+        policy = self.session.policy
+        if not trainer.supports_simulation and not isinstance(policy, LevelPolicy):
+            self.session.policy = LevelPolicy(policy.course, policy.settings, policy.rider)
+            log.warning("trainer has no simulation mode: using resistance levels")
+            if self.log:
+                self.log.event(now, "resistance levels")
 
     async def _sender(self, trainer: Trainer) -> None:
         """Sends only the latest command: older ones are obsolete if the trainer is slow."""
@@ -95,16 +134,20 @@ class RideRunner:
             tasks.append(asyncio.create_task(hr.run()))
         try:
             while not self.session.trainer_connected:
+                if self._stop:
+                    return self.session.snapshot()
                 if on_update:
                     on_update(self.session.snapshot())
                 await asyncio.sleep(0.2)
             self.session.start(self.clock.now())
+            self._state = self.session.state
             if self.log:
                 self.log.event(self.clock.now(), "start")
 
             next_state = next_update = 0.0
-            while not self.session.finished:
+            while not self.session.finished and not self._stop:
                 now = self.clock.now()
+                self._check_simulation_support(trainer, now)
                 command = self.session.tick(now)
                 if command is not None:
                     self._pending = command
@@ -119,7 +162,7 @@ class RideRunner:
 
             if self.log:
                 self.log.state(self.clock.now(), self.session.snapshot())
-                self.log.event(self.clock.now(), "finish")
+                self.log.event(self.clock.now(), "finish" if self.session.finished else "stop")
             if self.session.trainer_connected:
                 await trainer.finish()
         finally:

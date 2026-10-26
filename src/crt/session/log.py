@@ -7,13 +7,17 @@ replayed with the same course and parameters.
 from __future__ import annotations
 
 import csv
+import datetime
 import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import IO
 
-from crt.control.policy import Command, GradeCommand, LevelCommand
+import platformdirs
+
+from crt.control.policy import Command, ControlSettings, GradeCommand, LevelCommand
 from crt.devices.base import HeartRateSample, TrainerSample
+from crt.physics.model import RiderParams
 from crt.session.session import RideSnapshot
 
 COLUMNS = [
@@ -24,6 +28,25 @@ COLUMNS = [
 
 def _num(value: float | None, digits: int = 3) -> str:
     return "" if value is None else f"{value:.{digits}f}"
+
+
+def default_log_path() -> Path:
+    """A new file named after the current time in the user data directory."""
+    rides = Path(platformdirs.user_data_dir("crt")) / "rides"
+    rides.mkdir(parents=True, exist_ok=True)
+    return rides / f"{datetime.datetime.now():%Y-%m-%d_%H%M%S}.csv"
+
+
+def ride_header(
+    course_file: Path, course_name: str, trainer: str, start_s: float,
+    rider: RiderParams, control: ControlSettings,
+) -> dict:  # fmt: skip
+    """Everything ``replay`` and ``export`` need to rebuild the ride."""
+    return {
+        "course": str(course_file.resolve()), "course_name": course_name, "trainer": trainer,
+        "started": datetime.datetime.now().isoformat(), "start_s": start_s,
+        "rider": asdict(rider), "control": asdict(control),
+    }  # fmt: skip
 
 
 class RideLog:
