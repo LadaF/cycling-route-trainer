@@ -632,6 +632,21 @@ def _summary(snap, course) -> None:
     )
 
 
+def _export(log_file: Path, formats: list[str], course=None) -> None:
+    """Write the ride in each format next to its log."""
+    from crt.record.fit import write_fit
+    from crt.record.gpx import write_gpx
+    from crt.record.track import track_from_log
+    from crt.session.log import read_rows
+
+    header, rows = read_rows(log_file)
+    track = track_from_log(header, rows, course or _load_course(Path(header["course"])))
+    for fmt in formats:
+        path = log_file.with_suffix(f".{fmt}")
+        (write_fit if fmt == "fit" else write_gpx)(track, path)
+        console.print(f"{fmt.upper()}: {path}")
+
+
 @app.command("ride")
 def ride_cmd(
     course_file: Annotated[
@@ -732,6 +747,8 @@ def ride_cmd(
         finally:
             ride_log.close()
             console.print(f"ride log: {log_path}")
+            with contextlib.suppress(ValueError):  # the ride never started
+                _export(log_path, ["fit"], course)
         _summary(snap, course)
 
     _run(run())
@@ -769,6 +786,25 @@ def replay_cmd(
             f"  logged distance {logged / 1000:.3f} km, replayed {snap.s / 1000:.3f} km "
             f"(difference {snap.s - logged:+.1f} m)"
         )
+
+
+@app.command("export")
+def export_cmd(
+    log_file: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="Ride log CSV.")],
+    fmt: Annotated[str, typer.Option("--format", help="fit, gpx or both.")] = "fit",
+    course_file: Annotated[
+        Path | None, typer.Option("--course", help="Course, if not the one in the log.")
+    ] = None,
+) -> None:
+    """Write a ride as a FIT activity (virtual ride) or GPX track next to its log."""
+    formats = {"fit": ["fit"], "gpx": ["gpx"], "both": ["fit", "gpx"]}.get(fmt)
+    if formats is None:
+        raise typer.BadParameter("use fit, gpx or both", param_hint="--format")
+    try:
+        _export(log_file, formats, _load_course(course_file) if course_file else None)
+    except ValueError as exc:
+        console.print(f"[red]error:[/] {exc}")
+        raise typer.Exit(1) from None
 
 
 if __name__ == "__main__":

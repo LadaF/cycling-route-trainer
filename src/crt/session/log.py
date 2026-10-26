@@ -68,24 +68,29 @@ class RideLog:
         self._file.close()
 
 
-def read_log(path: Path) -> tuple[dict, list[TrainerSample], list[dict]]:
-    """Header, trainer samples and state rows of a ride log."""
+def read_rows(path: Path) -> tuple[dict, list[dict]]:
+    """Header and all rows of a ride log, as strings."""
     with path.open(encoding="utf-8") as f:
         first = f.readline()
         if not first.startswith("# "):
             raise ValueError(f"{path} is not a ride log")
-        header = json.loads(first[2:])
-        samples, states = [], []
-        for row in csv.DictReader(f):
-            if row["kind"] == "sample":
-                samples.append(
-                    TrainerSample(
-                        float(row["t"]),
-                        float(row["power_w"]),
-                        float(row["cadence_rpm"]) if row["cadence_rpm"] else None,
-                        float(row["trainer_speed_kmh"]) if row["trainer_speed_kmh"] else None,
-                    )
+        return json.loads(first[2:]), list(csv.DictReader(f))
+
+
+def read_log(path: Path) -> tuple[dict, list[TrainerSample], list[dict]]:
+    """Header, trainer samples and state rows of a ride log."""
+    header, rows = read_rows(path)
+    samples, states = [], []
+    for row in rows:
+        if row["kind"] == "sample":
+            samples.append(
+                TrainerSample(
+                    float(row["t"]),
+                    float(row["power_w"]),
+                    float(row["cadence_rpm"]) if row["cadence_rpm"] else None,
+                    float(row["trainer_speed_kmh"]) if row["trainer_speed_kmh"] else None,
                 )
-            elif row["kind"] == "state":
-                states.append(row)
+            )
+        elif row["kind"] == "state":
+            states.append(row)
     return header, samples, states

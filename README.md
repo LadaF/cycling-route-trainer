@@ -59,6 +59,7 @@ tunnels: © OpenStreetMap contributors (ODbL).
 crt-tool ride ride.crt.npz --trainer "Hammer 50414" --hr fenix --min-grade 1
 crt-tool ride ride.crt.npz --mock-power 200 --speedup 20   # no hardware
 crt-tool replay ~/.local/share/crt/rides/2026-10-25_215225.csv
+crt-tool export ~/.local/share/crt/rides/2026-10-25_215225.csv --format both
 ```
 
 * The trainer gets the terrain grade 1 s ahead (`--lookahead`), scaled by
@@ -70,6 +71,9 @@ crt-tool replay ~/.local/share/crt/rides/2026-10-25_215225.csv
   Power older than 3 s counts as zero. Ctrl-C ends the ride.
 * Every ride writes a log (user data directory, or `--log`): all samples, commands
   and the state at 1 Hz. `replay` re-runs the physics over the recorded power.
+* After the ride a FIT file is written next to the log, as a virtual ride (Garmin
+  Connect and Strava do not count it as outdoor). Upload it to Garmin Connect by
+  hand. `export` writes the FIT or a GPX track from any ride log.
 
 ## Hardware checklist (phase 1)
 
