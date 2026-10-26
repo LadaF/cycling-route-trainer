@@ -72,8 +72,9 @@ class MockTrainer:
             self._on_sample(TrainerSample(now, self._power(now), self._cadence, None))
             await self._sleep(self._interval)
 
-    async def send(self, command: Command) -> None:
+    async def send(self, command: Command) -> bool:
         self.commands.append((self._clock(), command))
+        return True
 
     async def finish(self) -> None:
         await asyncio.sleep(0)

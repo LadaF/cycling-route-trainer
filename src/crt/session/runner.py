@@ -74,9 +74,12 @@ class RideRunner:
             self._wake.clear()
             command, self._pending = self._pending, None
             if command is not None:
-                await trainer.send(command)
+                sent_at = self.clock.now()
+                ok = await trainer.send(command)
                 if self.log:
-                    self.log.command(self.clock.now(), command)
+                    self.log.command(sent_at, command)
+                    if not ok:
+                        self.log.event(self.clock.now(), "command failed")
 
     async def run(
         self,

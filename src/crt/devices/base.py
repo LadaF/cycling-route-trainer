@@ -35,7 +35,9 @@ class Trainer(Protocol):
         """Connect, take control and keep the connection alive until cancelled."""
         ...
 
-    async def send(self, command: Command) -> None: ...
+    async def send(self, command: Command) -> bool:
+        """Send a command; False if the trainer did not accept it."""
+        ...
 
     async def finish(self) -> None:
         """Leave the trainer in a neutral state at the end of a ride."""

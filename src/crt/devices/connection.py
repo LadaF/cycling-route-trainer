@@ -109,10 +109,10 @@ class BleTrainer:
     async def run(self) -> None:
         await keep_connected(self._target, "trainer", self._setup, self._connection)
 
-    async def send(self, command: Command) -> None:
+    async def send(self, command: Command) -> bool:
         ftms = self._ftms
         if ftms is None:
-            return
+            return False
         try:
             match command:
                 case GradeCommand(params):
@@ -120,7 +120,10 @@ class BleTrainer:
                 case LevelCommand(level):
                     await ftms.set_target_resistance_level(level)
         except CONNECTION_ERRORS as exc:
-            log.warning("trainer command failed: %s", exc)
+            # TimeoutError has an empty message
+            log.warning("trainer command failed: %s", exc or type(exc).__name__)
+            return False
+        return True
 
     async def finish(self) -> None:
         if self._ftms is not None:
