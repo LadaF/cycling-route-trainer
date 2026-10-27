@@ -487,7 +487,10 @@ def route_cmd(
     ] = None,
     source: Annotated[
         str,
-        typer.Option(help="Elevation: auto (DMR 5G, else Copernicus), dmr5g, copernicus, file."),
+        typer.Option(
+            help="Elevation: auto (DMR 5G, RGE ALTI, else Copernicus), dmr5g, rgealti, "
+            "copernicus, file."
+        ),
     ] = "auto",
     spacing: Annotated[float, typer.Option(help="Course grid spacing [m].")] = 2.0,
     smoothing: Annotated[float, typer.Option(help="Profile smoothing, Gaussian sigma [m].")] = 20.0,

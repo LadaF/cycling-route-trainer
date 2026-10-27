@@ -61,8 +61,9 @@ crt-tool route ride.gpx --plot-file ride.png --compare   # also plot Copernicus
 crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge query
 ```
 
-* **Elevation:** ČÚZK DMR 5G (lidar terrain, 2 m) inside Czechia, Copernicus GLO-30
-  elsewhere. `--source file` uses the elevations in the route file. Downloaded data
+* **Elevation:** ČÚZK DMR 5G (lidar terrain, 2 m) inside Czechia, IGN RGE ALTI
+  (terrain, 1–5 m) inside France, Copernicus GLO-30 elsewhere. Copernicus is a
+  surface model: on forested roads it can show bumps of 10–30 m that are not there. `--source file` uses the elevations in the route file. Downloaded data
   is cached in the user cache directory (`~/.cache/crt` on Linux).
 * **Bridges and tunnels:** taken from OpenStreetMap through the public Overpass API,
   one attempt per route, given up after 5 s (`--overpass-timeout`). If it fails, the

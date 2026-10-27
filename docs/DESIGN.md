@@ -116,12 +116,21 @@ cycling-route-trainer/
      pixel grid (no resampling), with a one-pixel border so bilinear interpolation
      never needs a neighbouring tile. About 0.25 s and 200 kB per tile; cached as
      GeoTIFF. Outside Czechia the service returns 0, which is treated as no data.
+   * `IgnRgeAlti`: IGN RGE ALTI, the terrain model of France (1–5 m, Licence Ouverte).
+     *Implemented* through the Géoplateforme altimetry API
+     `https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json`
+     (resource `ign_rge_alti_wld`), which returns elevations at points, up to 5000 per
+     POST request; outside France it returns -99999. The route points are sent in
+     batches and each answer is cached under a hash of its coordinates. A failed
+     request is not repeated, and the whole route then falls back to Copernicus, so
+     the two models are not mixed. On Mont Ventoux it showed that Copernicus had
+     bumps of up to 28 m on forested stretches of a road climbing at a steady 3–5 %.
    * `CuzkDmr4g` (5 m raster grid): a simpler fallback.
    * ZABAGED altimetry (contours and spot heights) is coarser than DMR 5G. It is only
      worth adding as an independent cross-check.
    * `CopernicusGlo30`: Copernicus GLO-30 on AWS Open Data. *Implemented* as the
-     fallback outside Czechia: whole 1°×1° tiles are downloaded once and cached.
-     It is a *surface* model (partly includes trees and buildings), so it is
+     fallback outside Czechia and France: whole 1°×1° tiles are downloaded once and
+     cached. It is a *surface* model (partly includes trees and buildings), so it is
      visibly noisier than DMR 5G on the same road.
    * `Srtm`: SRTM 1″ as a last resort (not implemented; Copernicus is better).
    * The design is open to other national lidar DEMs (Slovak ZBGIS DMR 5.0, Austrian

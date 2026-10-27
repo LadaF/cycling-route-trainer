@@ -18,6 +18,7 @@ from crt.elevation import bridges
 from crt.elevation.base import ElevationProvider, fill_from
 from crt.elevation.copernicus import CopernicusGlo30
 from crt.elevation.cuzk import CuzkDmr5g
+from crt.elevation.ign import IgnRgeAlti
 from crt.route.course import Course
 from crt.route.geometry import (
     LocalProjection,
@@ -30,7 +31,7 @@ from crt.route.parsers import RawRoute, read_route
 
 log = logging.getLogger(__name__)
 
-SOURCES = ("auto", "dmr5g", "copernicus", "file")
+SOURCES = ("auto", "dmr5g", "rgealti", "copernicus", "file")
 
 
 @dataclass(frozen=True)
@@ -48,9 +49,11 @@ class PipelineOptions:
 def providers_for(source: str) -> list[ElevationProvider]:
     match source:
         case "auto":
-            return [CuzkDmr5g(), CopernicusGlo30()]
+            return [CuzkDmr5g(), IgnRgeAlti(), CopernicusGlo30()]
         case "dmr5g":
             return [CuzkDmr5g()]
+        case "rgealti":
+            return [IgnRgeAlti()]
         case "copernicus":
             return [CopernicusGlo30()]
         case "file":

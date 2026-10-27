@@ -1,10 +1,13 @@
+import json
+
+import httpx
 import numpy as np
 import pytest
 import rasterio
 from pyproj import Transformer
 from rasterio.transform import from_origin
 
-from crt.elevation import bridges, cuzk
+from crt.elevation import bridges, cuzk, ign
 from crt.elevation.base import fill_from, sample_bilinear
 from crt.elevation.copernicus import CopernicusGlo30, tile_name
 from crt.route.geometry import LocalProjection
@@ -44,6 +47,58 @@ def test_fill_from_uses_providers_in_order():
     z, used = fill_from([first, second], np.arange(3.0), np.zeros(3))
     assert z.tolist() == [1.0, 20.0, 3.0]
     assert used.tolist() == [0, 1, 0]
+
+
+@pytest.fixture
+def ign_server(monkeypatch):
+    """Fake IGN service: the elevation is 10 × latitude, no data south of 44°; batches of 2."""
+    requests = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        if requests_fail and len(requests) in requests_fail:
+            return httpx.Response(502)
+        lat = [float(v) for v in body["lat"].split("|")]
+        return httpx.Response(
+            200, json={"elevations": [v * 10 if v >= 44 else -99999.0 for v in lat]}
+        )
+
+    requests_fail: set[int] = set()
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        ign.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw)
+    )
+    monkeypatch.setattr(ign, "BATCH", 2)
+    return requests, requests_fail
+
+
+def test_ign_batches_and_caches(tmp_path, ign_server):
+    requests, _ = ign_server
+    lat = np.array([45.0, 50.08, 43.5, 46.0])  # the second one is Prague: never sent
+    lon = np.array([5.0, 14.42, 6.0, 4.0])
+    provider = ign.IgnRgeAlti(cache=tmp_path)
+    z = provider.sample(lat, lon)
+    assert z[[0, 3]].tolist() == [450.0, 460.0] and np.isnan(z[[1, 2]]).all()
+    assert len(requests) == 2 and requests[0]["resource"] == ign.RESOURCE
+    assert "14.42" not in requests[0]["lon"] + requests[1]["lon"]
+    z2 = provider.sample(lat, lon)
+    assert len(requests) == 2  # from the cache
+    np.testing.assert_array_equal(z, z2)
+
+
+def test_ign_failure_gives_no_data_and_is_not_retried(tmp_path, ign_server):
+    requests, requests_fail = ign_server
+    requests_fail.add(2)
+    z = ign.IgnRgeAlti(cache=tmp_path).sample(np.array([45.0, 45.1, 45.2]), np.array([5.0] * 3))
+    assert np.isnan(z).all()  # not half IGN, half the next provider
+    assert len(requests) == 2
+
+
+def test_ign_outside_france_needs_no_request(tmp_path, ign_server):
+    requests, _ = ign_server
+    z = ign.IgnRgeAlti(cache=tmp_path).sample(np.array([50.08]), np.array([14.42]))
+    assert np.isnan(z).all() and requests == []
 
 
 def test_cuzk_samples_cached_tile(tmp_path):
