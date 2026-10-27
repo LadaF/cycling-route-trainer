@@ -65,6 +65,12 @@ def test_window_shows_snapshot(window, tmp_path):
     assert t["grade"]._detail.text() == "trainer +3.0 %"
 
 
+def test_window_opens_another_course(window, make_course, tmp_path):
+    window.set_course(make_course(), tmp_path / "other.crt.npz")
+    assert window._main.widget(1) is window.profile
+    assert window._top.widget(1) is window.map
+
+
 def test_cadence_display_ignores_single_dips(window):
     for cadence in (85.0, 84.0, 20.0, 86.0, 85.0):
         window.show_snapshot(snapshot(cadence=cadence))

@@ -132,6 +132,9 @@ class RideWindow(QMainWindow):
         return label
 
     def _replace(self, splitter: QSplitter, index: int, widget: QWidget) -> None:
+        # Call before dropping the attribute that holds the old widget: PySide leaves a
+        # widget put in by replaceWidget owned by Python, so the old one would already
+        # be deleted and gone from the splitter.
         old = splitter.widget(index)
         splitter.replaceWidget(index, widget)
         old.deleteLater()
@@ -164,8 +167,9 @@ class RideWindow(QMainWindow):
     def set_course(self, course: Course, path: Path) -> None:
         self.course, self.course_file = course, path
         self.setWindowTitle(f"{course.name} — Cycling Route Trainer")
-        self.profile = ProfileView(course)
-        self._replace(self._main, 1, self.profile)
+        profile = ProfileView(course)
+        self._replace(self._main, 1, profile)
+        self.profile = profile
         self._set_map(self._make_map(course))
         self.settings.course = str(path)
         self._save_settings()
@@ -181,8 +185,8 @@ class RideWindow(QMainWindow):
         return view
 
     def _set_map(self, view) -> None:
-        self.map = view
         self._replace(self._top, 1, view)
+        self.map = view
         self._top.setSizes([450, 550])
 
     # -- settings -------------------------------------------------------------
