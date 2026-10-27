@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QPointF
+from PySide6.QtGui import QPainterPath, QPolygonF
+from PySide6.QtWidgets import QGraphicsPathItem, QVBoxLayout, QWidget
 
 from crt.route.course import Course
 
@@ -28,6 +30,24 @@ def grade_colour(grade_pct: float) -> str:
         if grade_pct < limit:
             return colour
     return GRADE_COLOURS[-1][1]
+
+
+def grade_bands(
+    x: np.ndarray, z: np.ndarray, base: float, grade: np.ndarray
+) -> list[QGraphicsPathItem]:
+    """Bins between ``x`` edges, filled from ``base`` up to the profile, one item per colour."""
+    paths: dict[str, QPainterPath] = {}
+    for i, g in enumerate(grade):
+        corners = [(x[i], base), (x[i], z[i]), (x[i + 1], z[i + 1]), (x[i + 1], base)]
+        path = paths.setdefault(grade_colour(g), QPainterPath())
+        path.addPolygon(QPolygonF([QPointF(px, py) for px, py in corners]))
+    items = []
+    for colour, path in paths.items():
+        item = QGraphicsPathItem(path)
+        item.setPen(pg.mkPen(colour))  # covers the seams between neighbouring bands
+        item.setBrush(pg.mkBrush(colour))
+        items.append(item)
+    return items
 
 
 class ProfileView(QWidget):
@@ -57,13 +77,8 @@ class ProfileView(QWidget):
         self.zoom = pg.PlotWidget()
         self.zoom.setMouseEnabled(x=False, y=False)
         self.zoom.hideButtons()
-        self.zoom.addItem(
-            pg.BarGraphItem(
-                x0=edges[:-1] / 1000, x1=edges[1:] / 1000, y0=self._base,
-                y1=(z[:-1] + z[1:]) / 2, pens=[pg.mkPen(grade_colour(g)) for g in grade],
-                brushes=[pg.mkBrush(grade_colour(g)) for g in grade],
-            )
-        )  # fmt: skip
+        for item in grade_bands(edges / 1000, z, self._base, grade):
+            self.zoom.addItem(item)
         self.zoom.plot(edges / 1000, z, pen=pg.mkPen("#334155", width=1.5))
         self.zoom.setLabel("bottom", "km")
         self.zoom.setLabel("left", "m")
