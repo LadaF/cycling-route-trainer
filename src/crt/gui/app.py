@@ -39,6 +39,7 @@ def main(
     import qasync
     from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QApplication
+    from shiboken6 import delete
 
     from crt.config import Settings
     from crt.gui.window import RideWindow
@@ -66,6 +67,9 @@ def main(
     app.aboutToQuit.connect(closed.set)
     with loop:
         loop.run_until_complete(closed.wait())
+    # The web pages must go before their profile and the application, not in whatever
+    # order Python happens to release them.
+    delete(window)
 
 
 def run() -> None:

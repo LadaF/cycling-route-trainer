@@ -8,6 +8,7 @@ If Leaflet does not load (offline), ``failed`` is emitted and the window swaps i
 from __future__ import annotations
 
 import json
+from functools import cache
 from pathlib import Path
 
 import numpy as np
@@ -58,10 +59,13 @@ def _route_points(course: Course) -> list[list[float]]:
     return [[round(float(course.lat[i]), 6), round(float(course.lon[i]), 6)] for i in idx]
 
 
+@cache
 def _profile():
+    """One profile for the application, owned by it, so it outlives all pages."""
     from PySide6.QtWebEngineCore import QWebEngineProfile
+    from PySide6.QtWidgets import QApplication
 
-    profile = QWebEngineProfile("crt")
+    profile = QWebEngineProfile("crt", QApplication.instance())
     cache = Path(platformdirs.user_cache_dir("crt")) / "web"
     profile.setCachePath(str(cache))
     profile.setPersistentStoragePath(str(cache / "storage"))
@@ -80,9 +84,8 @@ class MapView(QWidget):
         from PySide6.QtWidgets import QVBoxLayout
 
         super().__init__()
-        self._profile = _profile()
         self._view = QWebEngineView(self)
-        self._view.setPage(QWebEnginePage(self._profile, self._view))
+        self._view.setPage(QWebEnginePage(_profile(), self._view))
         self._ready = False
         self._view.loadFinished.connect(self._loaded)
         html = PAGE.replace("ROUTE", json.dumps(_route_points(course)))
