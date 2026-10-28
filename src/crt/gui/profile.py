@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QEvent, QPointF
-from PySide6.QtGui import QPainterPath, QPolygonF
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt
+from PySide6.QtGui import QFontMetricsF, QPainterPath, QPolygonF
 from PySide6.QtWidgets import QGraphicsPathItem, QVBoxLayout, QWidget
 
 from crt.route.course import Course
@@ -50,6 +50,32 @@ def grade_bands(
     return items
 
 
+class UnitAxis(pg.AxisItem):
+    """A bottom axis with its unit at the right end of the row of tick numbers.
+
+    An axis label would take a row of its own under the numbers, which a short plot
+    cannot spare. The unit may cover the last number; it has a background so it
+    stays readable.
+    """
+
+    def __init__(self, unit: str) -> None:
+        super().__init__("bottom")
+        self._unit = unit
+
+    def paint(self, p, opt, widget) -> None:
+        super().paint(p, opt, widget)
+        if self.style["tickFont"]:
+            p.setFont(self.style["tickFont"])
+        metrics = QFontMetricsF(p.font())
+        bounds = self.mapRectFromParent(self.geometry())
+        top = bounds.top() + max(0, self.style["tickLength"]) + self.style["tickTextOffset"][1]
+        width = metrics.horizontalAdvance(f" {self._unit}")
+        rect = QRectF(bounds.right() - width, top, width, metrics.height())
+        p.fillRect(rect, pg.mkColor(pg.getConfigOption("background")))
+        p.setPen(self.textPen())
+        p.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop, self._unit)
+
+
 class ProfileView(QWidget):
     def __init__(self, course: Course) -> None:
         super().__init__()
@@ -57,13 +83,12 @@ class ProfileView(QWidget):
         km = course.s / 1000
         self._base = float(course.z.min()) - 20
 
-        self.overview = pg.PlotWidget()
+        self.overview = pg.PlotWidget(axisItems={"bottom": UnitAxis("km")})
         self.overview.setMouseEnabled(x=False, y=False)
         self.overview.hideButtons()
         self.overview.plot(km, course.z, pen=pg.mkPen("#64748b", width=1.5),
                            fillLevel=self._base, brush=(100, 116, 139, 60))  # fmt: skip
         self.overview.setXRange(0, km[-1], padding=0.01)
-        self.overview.setLabel("bottom", "km")
         self.overview.setLabel("left", "m")
         self._overview_marker = pg.InfiniteLine(angle=90, pen=pg.mkPen("#dc2626", width=2))
         self.overview.addItem(self._overview_marker)
@@ -74,13 +99,12 @@ class ProfileView(QWidget):
         z = np.interp(edges, course.s, course.z)
         grade = np.diff(z) / np.diff(edges) * 100
         self._edges, self._z_edges = edges, z
-        self.zoom = pg.PlotWidget()
+        self.zoom = pg.PlotWidget(axisItems={"bottom": UnitAxis("km")})
         self.zoom.setMouseEnabled(x=False, y=False)
         self.zoom.hideButtons()
         for item in grade_bands(edges / 1000, z, self._base, grade):
             self.zoom.addItem(item)
         self.zoom.plot(edges / 1000, z, pen=pg.mkPen("#334155", width=1.5))
-        self.zoom.setLabel("bottom", "km")
         self.zoom.setLabel("left", "m")
         self._zoom_marker = pg.InfiniteLine(angle=90, pen=pg.mkPen("#dc2626", width=2))
         self._dot = pg.ScatterPlotItem(size=11, brush="#dc2626", pen=pg.mkPen("w", width=1.5))

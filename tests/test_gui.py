@@ -116,6 +116,14 @@ def test_text_zoom(window, tmp_path):
         apply_font_scale(1.0)
 
 
+def test_profile_unit_needs_no_label_row(window):
+    from crt.gui.profile import UnitAxis
+
+    for plot in (window.profile.zoom, window.profile.overview):
+        axis = plot.getAxis("bottom")
+        assert isinstance(axis, UnitAxis) and not axis.label.isVisible()
+
+
 def test_cadence_display_ignores_single_dips(window):
     for cadence in (85.0, 84.0, 20.0, 86.0, 85.0):
         window.show_snapshot(snapshot(cadence=cadence))
