@@ -32,6 +32,7 @@ class Settings:
     trainer: str = ""  # name or address
     heart_rate: str = ""  # name or address; empty: no HR sensor
     course: str = ""  # the last course ridden or opened
+    font_scale: float = 1.0  # text size in the ride window, relative to the system font
     rider: RiderParams = field(default_factory=RiderParams)
     control: ControlSettings = field(default_factory=ControlSettings)
 

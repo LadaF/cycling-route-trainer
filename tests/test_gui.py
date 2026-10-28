@@ -3,14 +3,15 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
+from PySide6.QtGui import QFontMetricsF  # noqa: E402
 
 from crt.config import Settings  # noqa: E402
 from crt.control.policy import ControlSettings, GradeCommand  # noqa: E402
 from crt.devices.ftms.codec import SimulationParameters  # noqa: E402
 from crt.gui.profile import grade_colour  # noqa: E402
 from crt.gui.settings_dialog import SettingsDialog  # noqa: E402
-from crt.gui.widgets import Rolling  # noqa: E402
-from crt.gui.window import RideWindow  # noqa: E402
+from crt.gui.widgets import VALUE_REFERENCE, MetricTile, Rolling  # noqa: E402
+from crt.gui.window import RideWindow, apply_font_scale  # noqa: E402
 from crt.session.session import RideSnapshot, RideState  # noqa: E402
 
 
@@ -81,6 +82,38 @@ def test_window_reverses_course(window, tmp_path):
     assert Settings.load(tmp_path / "settings.toml").course.endswith("course.reverse.crt.npz")
     window.reverse_action.trigger()
     assert window.course_file == tmp_path / "course.crt.npz" and window.course.name == first.name
+
+
+def test_tile_value_grows_with_the_tile_and_fits(qtbot):
+    tile = MetricTile("Distance")
+    qtbot.addWidget(tile)
+    tile.show()  # a hidden widget gets its resize events only when shown
+    sizes = []
+    for width, height in [(200, 100), (600, 300)]:
+        tile.resize(width, height)
+        font = tile._value.font()
+        sizes.append(font.pixelSize())
+        assert QFontMetricsF(font).horizontalAdvance(VALUE_REFERENCE) < width
+    assert sizes[1] > 2.5 * sizes[0]
+
+
+def test_text_zoom(window, tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    try:
+        normal = QApplication.font().pointSizeF()
+        window.zoom_text(+1)
+        window.zoom_text(+1)
+        assert QApplication.font().pointSizeF() == pytest.approx(normal * 1.15**2, rel=0.01)
+        saved = Settings.load(tmp_path / "settings.toml").font_scale
+        assert saved == pytest.approx(1.3225, abs=0.001)
+        for _ in range(20):
+            window.zoom_text(+1)
+        assert window.settings.font_scale == 3.0  # the upper limit
+        window.zoom_text(0)
+        assert QApplication.font().pointSizeF() == pytest.approx(normal)
+    finally:
+        apply_font_scale(1.0)
 
 
 def test_cadence_display_ignores_single_dips(window):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QEvent, QPointF
 from PySide6.QtGui import QPainterPath, QPolygonF
 from PySide6.QtWidgets import QGraphicsPathItem, QVBoxLayout, QWidget
 
@@ -92,6 +92,20 @@ class ProfileView(QWidget):
         layout.addWidget(self.zoom, stretch=3)
         layout.addWidget(self.overview, stretch=1)
         self.set_position(0.0)
+        self._apply_font()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:  # the window's text zoom
+            self._apply_font()
+
+    def _apply_font(self) -> None:
+        # pyqtgraph axes do not follow the application font by themselves.
+        for plot in (self.zoom, self.overview):
+            for name in ("left", "bottom"):
+                axis = plot.getAxis(name)
+                axis.setTickFont(self.font())
+                axis.label.setFont(self.font())
 
     def set_position(self, s: float) -> None:
         z = float(np.interp(s, self.course.s, self.course.z))

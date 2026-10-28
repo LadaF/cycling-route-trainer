@@ -5,8 +5,13 @@ from __future__ import annotations
 import statistics
 from collections import deque
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QFontMetricsF
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout
+
+# The widest value a tile shows: all tiles size their value for it, so they match
+# and the size does not change with the numbers.
+VALUE_REFERENCE = "188.88 km"
 
 
 class Rolling:
@@ -33,7 +38,8 @@ class Rolling:
 
 
 class MetricTile(QFrame):
-    """A caption, a large value and a small line under it."""
+    """A caption and a small detail line above a large value. The value is as large
+    as the tile allows, so it grows with the window."""
 
     def __init__(self, caption: str) -> None:
         super().__init__()
@@ -42,16 +48,47 @@ class MetricTile(QFrame):
         self._value = QLabel("–")
         self._detail = QLabel("")
         font = self._value.font()
-        font.setPointSizeF(font.pointSizeF() * 2.6)
         font.setBold(True)
         self._value.setFont(font)
+        # The value takes the space left by the other lines; its font follows the tile
+        # size, so its size hint must not hold the tile (and the window) large.
+        self._value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         for label in (self._caption, self._detail):
             label.setStyleSheet("color: palette(placeholder-text)")
+        # The caption and the detail share the top line, leaving the value more height.
+        top = QHBoxLayout()
+        top.addWidget(self._caption)
+        top.addStretch()
+        top.addWidget(self._detail)
+        self._value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(0)
-        for label in (self._caption, self._value, self._detail):
-            label.setAlignment(Qt.AlignmentFlag.AlignRight)
-            layout.addWidget(label)
+        layout.addLayout(top)
+        layout.addWidget(self._value, stretch=1)
+        self._fit_value()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_value()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:  # the text zoom changes the small lines
+            self._fit_value()
+
+    def _fit_value(self) -> None:
+        margins = self.layout().contentsMargins()
+        frame = 2 * self.frameWidth()
+        width = self.width() - margins.left() - margins.right() - frame
+        line = self.fontMetrics().lineSpacing()  # the caption and the detail
+        height = self.height() - margins.top() - margins.bottom() - frame - line
+        font = self._value.font()
+        font.setPixelSize(100)
+        metrics = QFontMetricsF(font)
+        scale = min(width / metrics.horizontalAdvance(VALUE_REFERENCE), height / metrics.height())
+        font.setPixelSize(max(8, int(100 * scale * 0.95)))
+        self._value.setFont(font)
 
     def set(self, value: str, detail: str = "", *, highlight: bool = False) -> None:
         self._value.setText(value)

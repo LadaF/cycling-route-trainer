@@ -29,6 +29,9 @@ connects and the ride starts as soon as the trainer is connected; *Space* pauses
 resumes; *Stop* ends the ride. The FIT file is written next to the ride log.
 *Reverse* (Ctrl+R) switches to the course ridden the other way, kept next to it as
 `ride.reverse.crt.npz`; reversing again goes back to `ride.crt.npz`.
+The big values fill their tiles, so they grow with the window (maximize it, or drag
+the dividers). *A+* / *A−* (Ctrl++ / Ctrl+−, Ctrl+0 for normal) make the other text
+larger or smaller; the size is kept in the settings.
 
 The window shows power (3 s average), cadence (5 s median, for display only; the log
 and the FIT keep the sensor values), heart rate, simulated speed, terrain grade with

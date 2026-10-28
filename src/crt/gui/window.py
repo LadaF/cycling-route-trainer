@@ -12,8 +12,9 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QFont, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QGridLayout,
     QLabel,
@@ -38,6 +39,21 @@ log = logging.getLogger(__name__)
 
 ROUTE_FILES = "Courses and routes (*.crt.npz *.gpx *.tcx *.fit *.geojson);;All files (*)"
 MAP_UPDATE_S = 0.5
+
+
+ZOOM_STEP = 1.15
+ZOOM_RANGE = (0.6, 3.0)
+_system_font: QFont | None = None
+
+
+def apply_font_scale(scale: float) -> None:
+    """Scale the application font (all text but the big values, which fill their tiles)."""
+    global _system_font
+    if _system_font is None:
+        _system_font = QApplication.font()
+    font = QFont(_system_font)
+    font.setPointSizeF(_system_font.pointSizeF() * scale)
+    QApplication.setFont(font)
 
 
 class RideWindow(QMainWindow):
@@ -68,6 +84,7 @@ class RideWindow(QMainWindow):
         self.map = None
 
         self.setWindowTitle("Cycling Route Trainer")
+        apply_font_scale(settings.font_scale)
         self._build_actions()
         self._build_body()
         self._trainer_status = QLabel()
@@ -94,6 +111,16 @@ class RideWindow(QMainWindow):
         self.open_action = action("Open course…", self.choose_course, "Ctrl+O")
         self.reverse_action = action("Reverse", self.reverse_course, "Ctrl+R")
         self.settings_action = action("Settings…", self.edit_settings, "Ctrl+,")
+        smaller = action("A−", lambda: self.zoom_text(-1))
+        smaller.setShortcuts(QKeySequence.StandardKey.ZoomOut)
+        smaller.setToolTip("Smaller text (Ctrl+−)")
+        larger = action("A+", lambda: self.zoom_text(+1))
+        larger.setShortcuts([QKeySequence(QKeySequence.StandardKey.ZoomIn), QKeySequence("Ctrl+=")])
+        larger.setToolTip("Larger text (Ctrl++); the big values follow the window size")
+        normal = QAction("Normal text size", self)
+        normal.setShortcut(QKeySequence("Ctrl+0"))
+        normal.triggered.connect(lambda: self.zoom_text(0))
+        self.addAction(normal)
         bar.addSeparator()
         self.start_action = action("Start", self.start_ride, "Ctrl+Return")
         self.pause_action = action("Pause", self.toggle_pause, "Space")
@@ -209,6 +236,16 @@ class RideWindow(QMainWindow):
             self.settings = dialog.result_settings()
             self._save_settings()
             self._update_controls(None)
+
+    def zoom_text(self, steps: int) -> None:
+        """Make the text larger (+1), smaller (-1) or back to normal (0)."""
+        scale = self.settings.font_scale * ZOOM_STEP**steps if steps else 1.0
+        scale = round(min(max(scale, ZOOM_RANGE[0]), ZOOM_RANGE[1]), 3)
+        if scale == self.settings.font_scale:
+            return
+        self.settings.font_scale = scale
+        apply_font_scale(scale)
+        self._save_settings()
 
     def _save_settings(self) -> None:
         try:
