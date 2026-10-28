@@ -141,7 +141,11 @@ cycling-route-trainer/
    reads as a dive into the valley and a tunnel as a climb over the hill. Fix:
    * Fetch the OSM ways `bridge=*` and `tunnel=*` along the route (Overpass API,
      with `httpx`), or use the corresponding ZABAGED road objects. *Implemented with
-     Overpass:* one attempt per route, result cached; if the public server fails
+     Overpass:* one query per route, asking for the road bridges and tunnels in the
+     bounding boxes of 2 km pieces of the route (much cheaper for the server than an
+     `around` search along the route line; the extra structures are dropped by the
+     matching below). `tunnel=building_passage` is excluded: it is at ground level.
+     One attempt per route, result cached; if the public server fails
      (it is often overloaded), the course is prepared without the correction and
      marked as not checked. A more reliable source (ZABAGED, a local OSM extract)
      can replace it later.

@@ -48,27 +48,6 @@ class Interval:
         return asdict(self)
 
 
-def simplify(x: np.ndarray, y: np.ndarray, tolerance: float) -> np.ndarray:
-    """Ramer–Douglas–Peucker simplification. Returns the indices of kept points."""
-    keep = np.zeros(len(x), dtype=bool)
-    keep[[0, -1]] = True
-    stack = [(0, len(x) - 1)]
-    while stack:
-        a, b = stack.pop()
-        if b - a < 2:
-            continue
-        dx, dy = x[b] - x[a], y[b] - y[a]
-        norm = np.hypot(dx, dy)
-        px, py = x[a + 1 : b] - x[a], y[a + 1 : b] - y[a]
-        d = np.hypot(px, py) if norm < 1e-9 else np.abs(dx * py - dy * px) / norm
-        k = int(np.argmax(d))
-        if d[k] > tolerance:
-            m = a + 1 + k
-            keep[m] = True
-            stack += [(a, m), (m, b)]
-    return np.flatnonzero(keep)
-
-
 def _query_overpass(query: str, timeout: float) -> dict:
     """One attempt only: the public server is often overloaded, and the pipeline then
     simply continues without the correction."""
@@ -85,26 +64,42 @@ def _query_overpass(query: str, timeout: float) -> dict:
 
 def fetch_structures(
     lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray, *, radius: float = 25.0,
-    timeout: float = 5.0,
+    chunk: float = 2000.0, timeout: float = 5.0,
 ) -> list[Structure]:  # fmt: skip
-    """Road bridges and tunnels within ``radius`` metres of the route, from Overpass.
+    """Road bridges and tunnels near the route, from Overpass.
+
+    The route is cut into pieces of ``chunk`` metres, and one query asks for the
+    structures in the bounding box of each piece, widened by ``radius`` metres. Boxes
+    are much cheaper for the server than a distance search along the route line; the
+    extra structures they bring are dropped by ``match_intervals``. Building passages
+    (``tunnel=building_passage``) are at ground level and not wanted.
 
     ``timeout`` bounds each network step of the request and, rounded up, the query on
     the server, so the server does not keep working after we give up.
     """
-    idx = simplify(x, y, tolerance=5.0)
-    line = ",".join(f"{lat[i]:.6f},{lon[i]:.6f}" for i in idx)
-    query = (
-        f"[out:json][timeout:{math.ceil(timeout)}];"
-        f'(way["highway"]["bridge"]["bridge"!="no"](around:{radius:g},{line});'
-        f'way["highway"]["tunnel"]["tunnel"!="no"](around:{radius:g},{line}););'
-        "out tags geom;"
+    s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(x), np.diff(y)))])
+    piece = (s // chunk).astype(int)
+    dlat = radius / 111_320
+    boxes = []
+    for k in np.unique(piece):
+        # Each piece overlaps the next by one point, so no route segment falls between boxes.
+        sel = np.flatnonzero(piece == k)
+        sel = np.append(sel, min(sel[-1] + 1, len(s) - 1))
+        la, lo = lat[sel], lon[sel]
+        dlon = dlat / math.cos(math.radians(float(la.mean())))
+        edges = (la.min() - dlat, lo.min() - dlon, la.max() + dlat, lo.max() + dlon)
+        boxes.append(",".join(f"{v:.6f}" for v in edges))
+    statements = "".join(
+        f'way["highway"]["bridge"]["bridge"!="no"]({box});'
+        f'way["highway"]["tunnel"]["tunnel"!="no"]["tunnel"!="building_passage"]({box});'
+        for box in boxes
     )
+    query = f"[out:json][timeout:{math.ceil(timeout)}];({statements});out tags geom;"
     cache = cache_dir("overpass") / f"{hashlib.sha256(query.encode()).hexdigest()[:24]}.json"
     if cache.exists():
         result = json.loads(cache.read_text())
     else:
-        log.info("querying Overpass for bridges and tunnels (%d route vertices)", len(idx))
+        log.info("querying Overpass for bridges and tunnels (%d boxes)", len(boxes))
         result = _query_overpass(query, timeout)
         cache.write_text(json.dumps(result))
 

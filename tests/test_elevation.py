@@ -151,12 +151,6 @@ def test_copernicus_samples_cached_tile_and_absent(tmp_path):
     assert np.isnan(z[3])
 
 
-def test_simplify_keeps_corners():
-    x = np.array([0.0, 1.0, 2.0, 3.0, 3.0, 3.0])
-    y = np.array([0.0, 0.01, 0.0, 0.0, 1.0, 2.0])
-    assert bridges.simplify(x, y, tolerance=0.1).tolist() == [0, 3, 5]
-
-
 def test_bridge_along_route_is_matched_crossing_is_not():
     proj = LocalProjection(50.0, 14.0)
     s = np.arange(0.0, 1001.0, 2.0)

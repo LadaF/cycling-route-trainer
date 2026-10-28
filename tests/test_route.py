@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import numpy as np
@@ -258,3 +259,25 @@ def test_overpass_timeout_reaches_server_and_client(tmp_path, monkeypatch):
     bridges.fetch_structures(np.array([50.0, 50.001]), np.array([14.0, 14.0]), x, x, timeout=4.5)
     ((query, timeout),) = calls
     assert timeout == 4.5 and "[timeout:5]" in query
+
+
+def test_overpass_query_uses_overlapping_boxes(tmp_path, monkeypatch):
+    from crt.elevation import bridges
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        bridges, "_query_overpass", lambda query, timeout: calls.append(query) or {}
+    )
+    # 5 km due north in 500 m steps: three 2 km pieces
+    lat = 50.0 + np.arange(11) * 500 / 111_320
+    y = np.arange(11) * 500.0
+    bridges.fetch_structures(lat, np.full(11, 14.0), np.zeros(11), y)
+    (query,) = calls
+    boxes = re.findall(r'\["tunnel"!="building_passage"\]\(([^)]*)\)', query)
+    assert len(boxes) == 3 and query.count('["bridge"!="no"]') == 3
+    edges = [[float(v) for v in box.split(",")] for box in boxes]
+    assert edges[0][0] < lat[0] and edges[-1][2] > lat[-1]
+    # neighbouring boxes overlap, so no stretch of the route is left out
+    assert all(a[2] > b[0] for a, b in zip(edges, edges[1:], strict=False))
+    assert "around" not in query
