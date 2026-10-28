@@ -63,14 +63,24 @@ crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge q
 
 * **Elevation:** ČÚZK DMR 5G (lidar terrain, 2 m) inside Czechia, IGN RGE ALTI
   (terrain, 1–5 m) inside France, Copernicus GLO-30 elsewhere. Copernicus is a
-  surface model: on forested roads it can show bumps of 10–30 m that are not there. `--source file` uses the elevations in the route file. Downloaded data
-  is cached in the user cache directory (`~/.cache/crt` on Linux).
-* **Bridges and tunnels:** taken from OpenStreetMap through the public Overpass API,
-  one attempt per route, given up after 5 s (`--overpass-timeout`). If it fails, the
+  surface model: on forested roads it can show bumps of 10–30 m that are not there.
+  `--source file` uses the elevations in the route file. Downloaded data is cached
+  in the user cache directory (`~/.cache/crt` on Linux).
+* **Bridges and tunnels:** taken from OpenStreetMap through the public Overpass API:
+  one attempt on overpass-api.de, then one on overpass.private.coffee, each given up
+  after 5 s (`--overpass-timeout`). If it fails, the
   course is prepared without this correction and the summary says `not checked`.
   Opening a route in `crt-gui` or `crt-tool ride` keeps the prepared course next to
   it and reuses it while it is newer than the route; run `crt-tool route` again (for
   example with `--overpass-timeout 60`) to redo it.
+  When busy, the public server answers only browser tools, so the answer can be
+  fetched in the browser instead:
+  ```sh
+  crt-tool bridges-query ride.gpx    # prints the query and an Overpass Turbo link
+  # open the link; when the answer is shown: Export → Data → raw OSM data → save
+  crt-tool route ride.gpx --structures export.json
+  ```
+  The answer is cached, so the route needs it only once.
 * **Smoothing:** a 20 m Gaussian removes the steps that appear where the GPS track
   strays from the road onto a cutting or embankment.
 

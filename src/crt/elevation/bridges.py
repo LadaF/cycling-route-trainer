@@ -1,7 +1,9 @@
 """Bridge and tunnel correction.
 
 A terrain model has no bridges: on a viaduct it gives the valley floor, in a tunnel
-the hill above. Bridges and tunnels are taken from OpenStreetMap (Overpass API). The
+the hill above. Bridges and tunnels are taken from OpenStreetMap: from the Overpass
+API, or from an Overpass answer saved in the browser when the public server turns
+the application away (it serves browser tools first when it is busy). The
 route intervals that run *along* them are found, and the elevation inside each
 interval is replaced by a straight line between its ends. Passing *under* a bridge is
 not matched, because the route there is not parallel to the bridge.
@@ -14,6 +16,7 @@ import json
 import logging
 import math
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -24,7 +27,11 @@ from crt.route.geometry import LocalProjection
 
 log = logging.getLogger(__name__)
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Tried in order, once each: when the main server is full it answers 502 at once.
+OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
 # Overpass rejects requests with generic library user agents (HTTP 406).
 HEADERS = {"User-Agent": f"cycling-route-trainer/{__version__}", "Accept": "application/json"}
 
@@ -49,33 +56,46 @@ class Interval:
 
 
 def _query_overpass(query: str, timeout: float) -> dict:
-    """One attempt only: the public server is often overloaded, and the pipeline then
-    simply continues without the correction."""
-    response = httpx.post(
-        OVERPASS_URL, data={"data": query}, headers=HEADERS, timeout=httpx.Timeout(timeout)
-    )
-    response.raise_for_status()
-    result = response.json()
-    if "remark" in result and not result.get("elements"):
+    """One attempt per server, no retries: the public servers are often overloaded,
+    and the pipeline then continues without the correction."""
+    for url in OVERPASS_URLS:
+        try:
+            response = httpx.post(
+                url, data={"data": query}, headers=HEADERS, timeout=httpx.Timeout(timeout)
+            )
+            response.raise_for_status()
+            result = response.json()
+            _check_answer(result)
+            return result
+        except (httpx.HTTPError, ValueError) as exc:
+            log.info("Overpass %s: %s", httpx.URL(url).host, exc)
+            error = exc
+    raise error
+
+
+def _check_answer(result: object) -> None:
+    if not isinstance(result, dict) or not isinstance(result.get("elements"), list):
+        raise ValueError("not an Overpass JSON answer (no list of elements)")
+    if "remark" in result and not result["elements"]:
         # Timeouts and memory limits come as a remark with HTTP 200; not to be cached.
-        raise httpx.HTTPError(f"Overpass: {result['remark'][:200]}")
-    return result
+        raise ValueError(f"Overpass: {result['remark'][:200]}")
+    if any(el.get("type") == "way" and "geometry" not in el for el in result["elements"]):
+        raise ValueError("the ways have no geometry; the query must end with 'out tags geom;'")
 
 
-def fetch_structures(
+def structure_query(
     lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray, *, radius: float = 25.0,
     chunk: float = 2000.0, timeout: float = 5.0,
-) -> list[Structure]:  # fmt: skip
-    """Road bridges and tunnels near the route, from Overpass.
+) -> str:  # fmt: skip
+    """The Overpass query for the road bridges and tunnels near the route.
 
-    The route is cut into pieces of ``chunk`` metres, and one query asks for the
+    The route is cut into pieces of ``chunk`` metres, and the query asks for the
     structures in the bounding box of each piece, widened by ``radius`` metres. Boxes
     are much cheaper for the server than a distance search along the route line; the
     extra structures they bring are dropped by ``match_intervals``. Building passages
     (``tunnel=building_passage``) are at ground level and not wanted.
 
-    ``timeout`` bounds each network step of the request and, rounded up, the query on
-    the server, so the server does not keep working after we give up.
+    ``timeout`` (rounded up) limits the query on the server.
     """
     s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(x), np.diff(y)))])
     piece = (s // chunk).astype(int)
@@ -94,15 +114,46 @@ def fetch_structures(
         f'way["highway"]["tunnel"]["tunnel"!="no"]["tunnel"!="building_passage"]({box});'
         for box in boxes
     )
-    query = f"[out:json][timeout:{math.ceil(timeout)}];({statements});out tags geom;"
-    cache = cache_dir("overpass") / f"{hashlib.sha256(query.encode()).hexdigest()[:24]}.json"
+    return f"[out:json][timeout:{math.ceil(timeout)}];\n({statements});\nout tags geom;"
+
+
+def _cache_path(query: str) -> Path:
+    # Keyed without the [timeout:N] header: the answer does not depend on it.
+    body = query.split("\n", 1)[1]
+    return cache_dir("overpass") / f"{hashlib.sha256(body.encode()).hexdigest()[:24]}.json"
+
+
+def fetch_structures(
+    lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray, *, timeout: float = 5.0
+) -> list[Structure]:
+    """Road bridges and tunnels near the route, from the cache or from Overpass.
+
+    ``timeout`` bounds each network step of the request and, rounded up, the query on
+    the server, so the server does not keep working after we give up.
+    """
+    query = structure_query(lat, lon, x, y, timeout=timeout)
+    cache = _cache_path(query)
     if cache.exists():
         result = json.loads(cache.read_text())
     else:
-        log.info("querying Overpass for bridges and tunnels (%d boxes)", len(boxes))
+        log.info("querying Overpass for bridges and tunnels")
         result = _query_overpass(query, timeout)
         cache.write_text(json.dumps(result))
+    return parse_structures(result)
 
+
+def import_structures(
+    path: Path, lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray
+) -> list[Structure]:
+    """Structures from an Overpass answer saved in a file (e.g. exported from Overpass
+    Turbo), kept in the cache as the answer for this route."""
+    result = json.loads(path.read_text(encoding="utf-8"))
+    _check_answer(result)
+    _cache_path(structure_query(lat, lon, x, y)).write_text(json.dumps(result))
+    return parse_structures(result)
+
+
+def parse_structures(result: dict) -> list[Structure]:
     structures = []
     for el in result.get("elements", []):
         tags = el.get("tags", {})

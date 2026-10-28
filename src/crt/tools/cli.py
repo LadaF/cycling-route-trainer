@@ -504,6 +504,15 @@ def route_cmd(
     overpass_timeout: Annotated[
         float, typer.Option(help="Give up on Overpass after this long [s].")
     ] = 5.0,
+    structures: Annotated[
+        Path | None,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="Overpass answer saved from the browser (see bridges-query), used "
+            "instead of querying the server.",
+        ),
+    ] = None,
     plot: Annotated[bool, typer.Option(help="Show the elevation and grade profile.")] = False,
     plot_file: Annotated[
         Path | None, typer.Option(help="Save the profile plot (PNG, PDF, SVG).")
@@ -522,7 +531,7 @@ def route_cmd(
         raise typer.BadParameter(f"use one of {', '.join(SOURCES)}", param_hint="--source")
     options = PipelineOptions(
         source=source, spacing=spacing, smoothing=smoothing, fix_bridges=fix_bridges,
-        overpass_timeout=overpass_timeout,
+        overpass_timeout=overpass_timeout, structures_file=str(structures) if structures else None,
     )  # fmt: skip
     with console.status("preparing the course (first run downloads elevation data) …"):
         course = build_course(route_file, options)
@@ -560,6 +569,11 @@ def route_cmd(
     structures = course.meta["structures"]
     if not course.meta["structures_checked"]:
         console.print("  bridges/tunnels: [yellow]not checked[/]")
+        if fix_bridges and source != "file":
+            console.print(
+                f"  (if Overpass is busy, run [bold]crt-tool bridges-query {route_file}[/]"
+                " in the browser and pass the answer with [bold]--structures[/])"
+            )
     elif not structures:
         console.print("  bridges/tunnels: none on the route")
     for st in structures:
@@ -580,6 +594,28 @@ def route_cmd(
         plot_course(course, extra, plot_file)
         if plot_file:
             console.print(f"plot saved to {plot_file}")
+
+
+@app.command("bridges-query")
+def bridges_query_cmd(
+    route_file: Annotated[
+        Path, typer.Argument(exists=True, dir_okay=False, help="GPX, TCX or FIT.")
+    ],
+) -> None:
+    """Print the Overpass query for a route's bridges and tunnels, to run in a browser.
+
+    The public Overpass server serves browser tools first and often turns the
+    application away. Open the printed link (or paste the query into
+    https://overpass-turbo.eu), wait for the answer, choose Export → Data → raw OSM
+    data, and pass the saved file to "crt-tool route ROUTE --structures FILE".
+    """
+    from urllib.parse import quote
+
+    from crt.route.pipeline import structure_query
+
+    query = structure_query(route_file)
+    typer.echo(query)
+    typer.echo(f"\nhttps://overpass-turbo.eu/?Q={quote(query)}&R", err=True)
 
 
 # ---------------------------------------------------------------------------

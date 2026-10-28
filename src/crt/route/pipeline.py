@@ -44,6 +44,8 @@ class PipelineOptions:
     smoothing: float = 20.0
     fix_bridges: bool = True  # needs the public Overpass API; skipped if it fails
     overpass_timeout: float = 5.0  # s; a slow Overpass would hold up opening a route
+    # An Overpass answer saved from the browser, used instead of querying the server
+    structures_file: str | None = None
 
 
 def providers_for(source: str) -> list[ElevationProvider]:
@@ -68,15 +70,20 @@ def _fill_gaps(s: np.ndarray, z: np.ndarray) -> np.ndarray:
     return np.interp(s, s[ok], z[ok])
 
 
-def build_course(
-    path: Path,
-    options: PipelineOptions | None = None,
-    *,
-    providers: list[ElevationProvider] | None = None,
-    raw: RawRoute | None = None,
-) -> Course:
-    options = options or PipelineOptions()
-    raw = raw or read_route(path)
+@dataclass(frozen=True)
+class RouteGrid:
+    """The route resampled to the course grid, before any elevation is sampled."""
+
+    s: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+    lat: np.ndarray
+    lon: np.ndarray
+    z_file: np.ndarray  # elevation from the route file, NaN if none
+    projection: LocalProjection
+
+
+def route_grid(raw: RawRoute, options: PipelineOptions) -> RouteGrid:
     projection = LocalProjection.for_points(raw.lat, raw.lon)
     x, y = (np.asarray(v) for v in projection.forward(raw.lat, raw.lon))
     keep = drop_close_points(x, y, options.min_point_spacing)
@@ -89,12 +96,32 @@ def build_course(
     x, y = resampled[0], resampled[1]
     z_file = resampled[2] if file_ele is not None else np.full(len(s), np.nan)
     lat, lon = (np.asarray(v) for v in projection.inverse(x, y))
+    return RouteGrid(s, x, y, lat, lon, z_file, projection)
+
+
+def structure_query(path: Path, options: PipelineOptions | None = None) -> str:
+    """The Overpass query for the bridges and tunnels of a route, to run in a browser."""
+    g = route_grid(read_route(path), options or PipelineOptions())
+    return bridges.structure_query(g.lat, g.lon, g.x, g.y, timeout=25)
+
+
+def build_course(
+    path: Path,
+    options: PipelineOptions | None = None,
+    *,
+    providers: list[ElevationProvider] | None = None,
+    raw: RawRoute | None = None,
+) -> Course:
+    options = options or PipelineOptions()
+    raw = raw or read_route(path)
+    g = route_grid(raw, options)
+    s, x, y, lat, lon, z_file, projection = g.s, g.x, g.y, g.lat, g.lon, g.z_file, g.projection
     bearing = bearing_deg(x, y)
 
     providers = providers_for(options.source) if providers is None else providers
     z, used = fill_from(providers, lat, lon)
     coverage = {p.name: float(np.mean(used == i)) for i, p in enumerate(providers)}
-    if np.isnan(z).any() and file_ele is not None:
+    if np.isnan(z).any() and raw.ele is not None:
         missing = np.isnan(z)
         z[missing] = z_file[missing]
         coverage["route file"] = float(np.mean(missing & ~np.isnan(z)))
@@ -103,12 +130,19 @@ def build_course(
     intervals: list[bridges.Interval] = []
     structures_checked = False
     if options.fix_bridges and options.source != "file":
-        try:
-            structures = bridges.fetch_structures(lat, lon, x, y, timeout=options.overpass_timeout)
+        if options.structures_file:  # given explicitly: a bad file is an error
+            structures = bridges.import_structures(Path(options.structures_file), lat, lon, x, y)
+        else:
+            try:
+                structures = bridges.fetch_structures(
+                    lat, lon, x, y, timeout=options.overpass_timeout
+                )
+            except (httpx.HTTPError, ValueError) as exc:
+                log.warning("bridge and tunnel correction skipped: %s", exc)
+                structures = None
+        if structures is not None:
             intervals = bridges.match_intervals(s, x, y, bearing, structures, projection)
             structures_checked = True
-        except (httpx.HTTPError, ValueError) as exc:
-            log.warning("bridge and tunnel correction skipped: %s", exc)
     z_fixed = bridges.apply_intervals(s, z_raw, intervals)
 
     sigma = options.smoothing / options.spacing

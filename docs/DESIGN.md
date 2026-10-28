@@ -145,9 +145,12 @@ cycling-route-trainer/
      bounding boxes of 2 km pieces of the route (much cheaper for the server than an
      `around` search along the route line; the extra structures are dropped by the
      matching below). `tunnel=building_passage` is excluded: it is at ground level.
-     One attempt per route, result cached; if the public server fails
-     (it is often overloaded), the course is prepared without the correction and
-     marked as not checked. A more reliable source (ZABAGED, a local OSM extract)
+     One attempt on overpass-api.de, then one on overpass.private.coffee (when full,
+     overpass-api.de answers 502 at once and says it serves browser tools first),
+     result cached. If the user fetches the answer in the browser instead
+     (`crt-tool bridges-query`, then `crt-tool route --structures`), it is cached
+     the same way. If the public servers fail (they are often overloaded), the
+     course is prepared without the correction and marked as not checked. A more reliable source (ZABAGED, a local OSM extract)
      can replace it later.
    * Map them to intervals of *s* and replace the elevation inside each interval with
      a linear interpolation between its end points. Allow manual intervals in the

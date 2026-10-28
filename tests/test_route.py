@@ -1,6 +1,8 @@
+import json
 import re
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pytest
 
@@ -281,3 +283,73 @@ def test_overpass_query_uses_overlapping_boxes(tmp_path, monkeypatch):
     # neighbouring boxes overlap, so no stretch of the route is left out
     assert all(a[2] > b[0] for a, b in zip(edges, edges[1:], strict=False))
     assert "around" not in query
+
+
+def test_structures_from_browser_file_are_used_and_cached(tmp_path, monkeypatch):
+    from crt.elevation import bridges
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+
+    def no_server(query, timeout):
+        raise httpx.ConnectError("the test must not reach Overpass")
+
+    monkeypatch.setattr(bridges, "_query_overpass", no_server)
+    raw = RawRoute("north", np.linspace(50.0, 50.009, 50), np.full(50, 14.0), None)
+    bridge = {
+        "type": "way",
+        "tags": {"highway": "primary", "bridge": "yes", "name": "Most"},
+        "geometry": [{"lat": 50.003, "lon": 14.0}, {"lat": 50.005, "lon": 14.0}],
+    }
+    answer = tmp_path / "export.json"
+    answer.write_text(json.dumps({"version": 0.6, "elements": [bridge]}))
+
+    def build(**options):
+        return build_course(
+            Path("north.gpx"), PipelineOptions(**options), providers=[SlopeProvider()], raw=raw
+        )
+
+    c = build(structures_file=str(answer))
+    assert c.meta["structures_checked"] is True
+    ((interval,),) = [c.meta["structures"]]
+    assert interval["name"] == "Most" and 320 < interval["s0"] < interval["s1"] < 570
+    # Later preparations find the answer in the cache, whatever the Overpass timeout.
+    again = build(overpass_timeout=60.0)
+    assert again.meta["structures"] == c.meta["structures"]
+
+
+def test_browser_file_without_geometry_is_an_error(tmp_path, monkeypatch):
+    from crt.elevation import bridges
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+    raw = RawRoute("north", np.linspace(50.0, 50.009, 50), np.full(50, 14.0), None)
+    answer = tmp_path / "export.json"
+    answer.write_text(json.dumps({"elements": [{"type": "way", "id": 1, "tags": {}}]}))
+    with pytest.raises(ValueError, match="out tags geom"):
+        build_course(
+            Path("north.gpx"),
+            PipelineOptions(structures_file=str(answer)),
+            providers=[SlopeProvider()],
+            raw=raw,
+        )
+
+
+def test_overpass_servers_are_tried_once_each(monkeypatch):
+    from crt.elevation import bridges
+
+    calls = []
+
+    def post(url, **kw):
+        calls.append(url)
+        request = httpx.Request("POST", url)
+        if url == bridges.OVERPASS_URLS[0]:
+            return httpx.Response(502, request=request)
+        return httpx.Response(200, json={"elements": []}, request=request)
+
+    monkeypatch.setattr(bridges.httpx, "post", post)
+    assert bridges._query_overpass("q", 5.0) == {"elements": []}
+    assert calls == bridges.OVERPASS_URLS
+    calls.clear()
+    monkeypatch.setattr(bridges, "OVERPASS_URLS", [bridges.OVERPASS_URLS[0]] * 2)
+    with pytest.raises(httpx.HTTPStatusError):
+        bridges._query_overpass("q", 5.0)
+    assert len(calls) == 2  # no retries beyond one per server
