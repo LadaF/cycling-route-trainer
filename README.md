@@ -27,6 +27,8 @@ Set the trainer (e.g. `Hammer 50414`), the heart rate sensor and your mass in
 *Settings*. They are kept in `settings.toml` in the user config directory. *Start*
 connects and the ride starts as soon as the trainer is connected; *Space* pauses and
 resumes; *Stop* ends the ride. The FIT file is written next to the ride log.
+*Reverse* (Ctrl+R) switches to the course ridden the other way, kept next to it as
+`ride.reverse.crt.npz`; reversing again goes back to `ride.crt.npz`.
 
 The window shows power (3 s average), cadence (5 s median, for display only; the log
 and the FIT keep the sensor values), heart rate, simulated speed, terrain grade with
@@ -59,6 +61,7 @@ Windows, do not pair the trainer in Windows Settings.
 crt-tool route ride.gpx --plot                 # writes ride.crt.npz next to the GPX
 crt-tool route ride.gpx --plot-file ride.png --compare   # also plot Copernicus
 crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge query
+crt-tool route ride.gpx --reverse              # the other way: ride.reverse.crt.npz
 ```
 
 * **Elevation:** ČÚZK DMR 5G (lidar terrain, 2 m) inside Czechia, IGN RGE ALTI
@@ -93,6 +96,7 @@ tunnels: © OpenStreetMap contributors (ODbL).
 ```sh
 crt-tool ride ride.crt.npz --trainer "Hammer 50414" --hr fenix --min-grade 1
 crt-tool ride ride.crt.npz --mock-power 200 --speedup 20   # no hardware
+crt-tool ride ride.crt.npz --reverse --trainer "Hammer 50414"   # the other way
 crt-tool replay ~/.local/share/crt/rides/2026-10-25_215225.csv
 crt-tool export ~/.local/share/crt/rides/2026-10-25_215225.csv --format both
 ```
