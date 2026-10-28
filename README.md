@@ -77,7 +77,7 @@ crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge q
   fetched in the browser instead:
   ```sh
   crt-tool bridges-query ride.gpx    # prints the query and an Overpass Turbo link
-  # open the link; when the answer is shown: Export → Data → raw OSM data → save
+  # open the link; when the answer is shown: Export → Data → raw OSM data or GeoJSON
   crt-tool route ride.gpx --structures export.json
   ```
   The answer is cached, so the route needs it only once.

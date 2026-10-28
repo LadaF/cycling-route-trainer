@@ -353,3 +353,31 @@ def test_overpass_servers_are_tried_once_each(monkeypatch):
     with pytest.raises(httpx.HTTPStatusError):
         bridges._query_overpass("q", 5.0)
     assert len(calls) == 2  # no retries beyond one per server
+
+
+def test_structures_from_turbo_geojson(tmp_path, monkeypatch):
+    from crt.elevation import bridges
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+    raw = RawRoute("north", np.linspace(50.0, 50.009, 50), np.full(50, 14.0), None)
+    tunnel = {
+        "type": "Feature",
+        "id": "way/1",
+        "properties": {"@id": "way/1", "highway": "cycleway", "tunnel": "yes", "name": "T"},
+        "geometry": {"type": "LineString", "coordinates": [[14.0, 50.003], [14.0, 50.005]]},
+    }
+    node = {
+        "type": "Feature",
+        "properties": {},
+        "geometry": {"type": "Point", "coordinates": [14, 50]},
+    }
+    answer = tmp_path / "export.geojson"
+    answer.write_text(json.dumps({"type": "FeatureCollection", "features": [tunnel, node]}))
+    c = build_course(
+        Path("north.gpx"),
+        PipelineOptions(structures_file=str(answer)),
+        providers=[SlopeProvider()],
+        raw=raw,
+    )
+    ((interval,),) = [c.meta["structures"]]
+    assert interval["kind"] == "tunnel" and interval["name"] == "T"

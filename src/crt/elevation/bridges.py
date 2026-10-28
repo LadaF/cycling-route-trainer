@@ -142,15 +142,49 @@ def fetch_structures(
     return parse_structures(result)
 
 
+class StructuresFileError(ValueError):
+    """A structures file given by the user cannot be used."""
+
+
 def import_structures(
     path: Path, lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray
 ) -> list[Structure]:
-    """Structures from an Overpass answer saved in a file (e.g. exported from Overpass
-    Turbo), kept in the cache as the answer for this route."""
-    result = json.loads(path.read_text(encoding="utf-8"))
-    _check_answer(result)
+    """Structures from an Overpass answer saved in a file, kept in the cache as the
+    answer for this route. Overpass Turbo's "raw OSM data" and GeoJSON exports both
+    work; GeoJSON is converted to the raw form."""
+    try:
+        try:
+            result = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError("not a JSON file") from exc
+        if isinstance(result, dict) and result.get("type") == "FeatureCollection":
+            result = _from_geojson(result)
+        _check_answer(result)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise StructuresFileError(f"{path}: {exc}") from exc
     _cache_path(structure_query(lat, lon, x, y)).write_text(json.dumps(result))
     return parse_structures(result)
+
+
+def _from_geojson(collection: dict) -> dict:
+    """Overpass Turbo GeoJSON (tags flattened into the properties, next to "@id" and
+    similar keys) as an Overpass answer with ways and their geometry."""
+    elements = []
+    for feature in collection["features"]:
+        geometry = feature.get("geometry") or {}
+        match geometry.get("type"):
+            case "LineString":
+                lines = [geometry["coordinates"]]
+            case "MultiLineString":
+                lines = geometry["coordinates"]
+            case _:
+                continue
+        props = feature.get("properties") or {}
+        tags = props.get("tags") or {k: v for k, v in props.items() if not k.startswith("@")}
+        for line in lines:
+            points = [{"lat": float(lat), "lon": float(lon)} for lon, lat, *_ in line]
+            elements.append({"type": "way", "tags": tags, "geometry": points})
+    return {"elements": elements}
 
 
 def parse_structures(result: dict) -> list[Structure]:

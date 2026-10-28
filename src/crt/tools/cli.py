@@ -509,8 +509,8 @@ def route_cmd(
         typer.Option(
             exists=True,
             dir_okay=False,
-            help="Overpass answer saved from the browser (see bridges-query), used "
-            "instead of querying the server.",
+            help="Overpass answer saved from the browser (see bridges-query), raw OSM "
+            "data or GeoJSON, used instead of querying the server.",
         ),
     ] = None,
     plot: Annotated[bool, typer.Option(help="Show the elevation and grade profile.")] = False,
@@ -533,8 +533,14 @@ def route_cmd(
         source=source, spacing=spacing, smoothing=smoothing, fix_bridges=fix_bridges,
         overpass_timeout=overpass_timeout, structures_file=str(structures) if structures else None,
     )  # fmt: skip
-    with console.status("preparing the course (first run downloads elevation data) …"):
-        course = build_course(route_file, options)
+    from crt.elevation.bridges import StructuresFileError
+
+    try:
+        with console.status("preparing the course (first run downloads elevation data) …"):
+            course = build_course(route_file, options)
+    except StructuresFileError as exc:
+        console.print(f"[red]cannot use the structures file[/] {exc}", highlight=False)
+        raise typer.Exit(1) from None
     output = output or route_file.with_suffix(".crt.npz")
     course.save(output)
 
@@ -607,7 +613,8 @@ def bridges_query_cmd(
     The public Overpass server serves browser tools first and often turns the
     application away. Open the printed link (or paste the query into
     https://overpass-turbo.eu), wait for the answer, choose Export → Data → raw OSM
-    data, and pass the saved file to "crt-tool route ROUTE --structures FILE".
+    data (or GeoJSON), and pass the saved file to
+    "crt-tool route ROUTE --structures FILE".
     """
     from urllib.parse import quote
 
