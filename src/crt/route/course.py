@@ -26,7 +26,7 @@ class CoursePoint:
 @dataclass
 class Course:
     name: str
-    s: np.ndarray  # distance along the route [m], uniform except the last interval
+    s: np.ndarray  # distance along the route [m], uniform except one end interval
     lat: np.ndarray
     lon: np.ndarray
     z: np.ndarray  # final elevation: bridges fixed, smoothed [m]
@@ -50,6 +50,30 @@ class Course:
             float(np.interp(s, self.s, self.grade)),
             # Nearest grid point: interpolating would break across the 0/360° wrap.
             float(self.bearing[min(int(np.searchsorted(self.s, s)), len(self.s) - 1)]),
+        )
+
+    def reversed(self) -> Course:
+        """The same course ridden the other way. Exact: the grid is mirrored, not
+        resampled, so its short interval moves to the start."""
+        length = self.length
+        meta = dict(self.meta)
+        meta["reversed"] = not meta.get("reversed", False)
+        meta["structures"] = [
+            {**iv, "s0": length - iv["s1"], "s1": length - iv["s0"]}
+            for iv in reversed(meta.get("structures", []))
+        ]
+        name = self.name.removesuffix(" (reversed)")
+        return Course(
+            name if self.meta.get("reversed") else f"{name} (reversed)",
+            length - self.s[::-1],
+            self.lat[::-1].copy(),
+            self.lon[::-1].copy(),
+            self.z[::-1].copy(),
+            -self.grade[::-1],
+            (self.bearing[::-1] + 180.0) % 360.0,
+            self.z_raw[::-1].copy(),
+            self.z_file[::-1].copy(),
+            meta,
         )
 
     def mean_grade(self, s0: float, s1: float) -> float:
@@ -79,3 +103,12 @@ class Course:
                 raise ValueError(f"{path} was written by an incompatible version")
             name = meta.pop("name")
             return cls(name, **{k: data[k] for k in _ARRAYS}, meta=meta)
+
+
+def reversed_path(path: Path) -> Path:
+    """Where the reversed course of the course file ``path`` is kept: ``X.crt.npz`` and
+    ``X.reverse.crt.npz`` are each other's reverse."""
+    stem = path.name.removesuffix(".crt.npz")
+    if stem.endswith(".reverse"):
+        return path.with_name(stem.removesuffix(".reverse") + ".crt.npz")
+    return path.with_name(stem + ".reverse.crt.npz")

@@ -71,6 +71,18 @@ def test_window_opens_another_course(window, make_course, tmp_path):
     assert window._top.widget(1) is window.map
 
 
+def test_window_reverses_course(window, tmp_path):
+    window.course.save(window.course_file)
+    first = window.course
+    window.reverse_action.trigger()
+    assert window.course_file == tmp_path / "course.reverse.crt.npz"
+    assert window.course_file.exists() and window.course.name.endswith("(reversed)")
+    assert window.course.z[0] == first.z[-1]
+    assert Settings.load(tmp_path / "settings.toml").course.endswith("course.reverse.crt.npz")
+    window.reverse_action.trigger()
+    assert window.course_file == tmp_path / "course.crt.npz" and window.course.name == first.name
+
+
 def test_cadence_display_ignores_single_dips(window):
     for cadence in (85.0, 84.0, 20.0, 86.0, 85.0):
         window.show_snapshot(snapshot(cadence=cadence))

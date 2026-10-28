@@ -513,6 +513,10 @@ def route_cmd(
             "data or GeoJSON, used instead of querying the server.",
         ),
     ] = None,
+    reverse: Annotated[
+        bool,
+        typer.Option(help="Ride the route the other way (default output: NAME.reverse.crt.npz)."),
+    ] = False,
     plot: Annotated[bool, typer.Option(help="Show the elevation and grade profile.")] = False,
     plot_file: Annotated[
         Path | None, typer.Option(help="Save the profile plot (PNG, PDF, SVG).")
@@ -541,7 +545,13 @@ def route_cmd(
     except StructuresFileError as exc:
         console.print(f"[red]cannot use the structures file[/] {exc}", highlight=False)
         raise typer.Exit(1) from None
-    output = output or route_file.with_suffix(".crt.npz")
+    default_output = route_file.with_suffix(".crt.npz")
+    if reverse:
+        from crt.route.course import reversed_path
+
+        course = course.reversed()
+        default_output = reversed_path(default_output)
+    output = output or default_output
     course.save(output)
 
     s, z = course.s, course.z
@@ -706,6 +716,7 @@ def ride_cmd(
     temperature: Annotated[float, typer.Option(help="Air temperature [°C].")] = 20.0,
     max_speed: Annotated[float, typer.Option(help="Virtual braking above this [km/h].")] = 60.0,
     start_km: Annotated[float, typer.Option(help="Start this far along the course [km].")] = 0.0,
+    reverse: Annotated[bool, typer.Option(help="Ride the course the other way.")] = False,
     log_path: Annotated[
         Path | None, typer.Option("--log", help="Ride log CSV (default: user data directory).")
     ] = None,
@@ -728,6 +739,8 @@ def ride_cmd(
         )
 
     course = _load_course(course_file)
+    if reverse:
+        course = course.reversed()
     rider = RiderParams(
         rider_mass=rider_mass, bike_mass=bike_mass, cda=cda, crr=crr,
         temperature_c=temperature, max_speed=max_speed / 3.6,

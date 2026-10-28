@@ -6,7 +6,7 @@ import httpx
 import numpy as np
 import pytest
 
-from crt.route.course import Course
+from crt.route.course import Course, reversed_path
 from crt.route.geometry import (
     LocalProjection,
     bearing_deg,
@@ -131,6 +131,38 @@ def test_course_queries():
     assert c.mean_grade(0.0, 50.0) == pytest.approx(0.1)
     assert c.mean_grade(50.0, 80.0) == pytest.approx(-2 / 30)
     assert c.mean_grade(90.0, 200.0) == pytest.approx(0.0)
+
+
+def test_reversed_course():
+    s = np.array([0.0, 2.0, 4.0, 6.0, 7.0])  # the short interval at the end
+    z = np.array([100.0, 101.0, 103.0, 103.0, 102.0])
+    n = len(s)
+    c = Course(
+        "hill", s, np.linspace(50, 50.0001, n), np.full(n, 14.0), z, np.gradient(z, s),
+        np.array([350.0, 0.0, 10.0, 90.0, 180.0]), z + 1, np.full(n, np.nan),
+        {"structures": [{"kind": "bridge", "name": "A", "s0": 1.0, "s1": 3.0},
+                        {"kind": "tunnel", "name": "B", "s0": 5.0, "s1": 6.5}]},
+    )  # fmt: skip
+    r = c.reversed()
+    assert r.name == "hill (reversed)" and r.meta["reversed"] is True
+    assert r.s.tolist() == [0.0, 1.0, 3.0, 5.0, 7.0] and r.length == c.length
+    assert r.z.tolist() == z[::-1].tolist() and r.lat[0] == c.lat[-1]
+    np.testing.assert_allclose(r.grade, np.gradient(r.z, r.s))  # still dz/ds
+    assert r.bearing.tolist() == [0.0, 270.0, 190.0, 180.0, 170.0]
+    assert [(i["name"], i["s0"], i["s1"]) for i in r.meta["structures"]] == [
+        ("B", 0.5, 2.0), ("A", 4.0, 6.0)
+    ]  # fmt: skip
+    assert c.meta.get("reversed") is None  # the original is untouched
+    back = r.reversed()
+    assert back.name == "hill" and back.meta["reversed"] is False
+    np.testing.assert_array_equal(back.s, c.s)
+    np.testing.assert_array_equal(back.bearing, c.bearing)
+    assert back.meta["structures"] == c.meta["structures"]
+
+
+def test_reversed_path():
+    assert reversed_path(Path("/a/Karlin.crt.npz")) == Path("/a/Karlin.reverse.crt.npz")
+    assert reversed_path(Path("/a/Karlin.reverse.crt.npz")) == Path("/a/Karlin.crt.npz")
 
 
 def test_course_save_load(tmp_path):

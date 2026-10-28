@@ -28,7 +28,7 @@ from crt.control.policy import GradeCommand, GradePolicy
 from crt.gui.profile import ProfileView
 from crt.gui.settings_dialog import SettingsDialog
 from crt.gui.widgets import MetricTile, Rolling
-from crt.route.course import Course
+from crt.route.course import Course, reversed_path
 from crt.session.log import RideLog, default_log_path, ride_header
 from crt.session.runner import Clock, RideRunner
 from crt.session.session import RideSession, RideSnapshot, RideState, describe_command
@@ -92,6 +92,7 @@ class RideWindow(QMainWindow):
             return a
 
         self.open_action = action("Open course…", self.choose_course, "Ctrl+O")
+        self.reverse_action = action("Reverse", self.reverse_course, "Ctrl+R")
         self.settings_action = action("Settings…", self.edit_settings, "Ctrl+,")
         bar.addSeparator()
         self.start_action = action("Start", self.start_ride, "Ctrl+Return")
@@ -174,6 +175,17 @@ class RideWindow(QMainWindow):
         self.settings.course = str(path)
         self._save_settings()
         self._update_controls(None)
+
+    def reverse_course(self) -> None:
+        """Switch to the course ridden the other way, kept next to the current one."""
+        path = reversed_path(self.course_file)
+        course = self.course.reversed()
+        try:
+            course.save(path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Reverse", f"Cannot save {path.name}:\n{exc}")
+            return
+        self.set_course(course, path)
 
     def _make_map(self, course: Course):
         from crt.gui.map_view import MapView, TrackView
@@ -352,6 +364,7 @@ class RideWindow(QMainWindow):
     def _update_controls(self, snap: RideSnapshot | None) -> None:
         riding = self.riding
         self.open_action.setEnabled(not riding)
+        self.reverse_action.setEnabled(self.course is not None and not riding)
         self.settings_action.setEnabled(not riding)
         self.start_action.setEnabled(self.course is not None and not riding)
         self.stop_action.setEnabled(riding)
