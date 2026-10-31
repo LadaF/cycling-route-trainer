@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -39,6 +40,7 @@ log = logging.getLogger(__name__)
 
 ROUTE_FILES = "Courses and routes (*.crt.npz *.gpx *.tcx *.fit *.geojson);;All files (*)"
 MAP_UPDATE_S = 0.5
+DIFFICULTY_STEP = 0.1
 
 
 ZOOM_STEP = 1.15
@@ -125,6 +127,11 @@ class RideWindow(QMainWindow):
         self.start_action = action("Start", self.start_ride, "Ctrl+Return")
         self.pause_action = action("Pause", self.toggle_pause, "Space")
         self.stop_action = action("Stop", self.stop_ride, "Ctrl+.")
+        bar.addSeparator()
+        self.easier_action = action("Easier", lambda: self.change_difficulty(-1), "Ctrl+[")
+        self.easier_action.setToolTip("Smaller share of the grade on the trainer (Ctrl+[)")
+        self.harder_action = action("Harder", lambda: self.change_difficulty(+1), "Ctrl+]")
+        self.harder_action.setToolTip("Larger share of the grade on the trainer (Ctrl+])")
         bar.addSeparator()
         self.follow_action = action("Follow rider", self._follow_changed)
         self.follow_action.setCheckable(True)
@@ -236,6 +243,19 @@ class RideWindow(QMainWindow):
             self.settings = dialog.result_settings()
             self._save_settings()
             self._update_controls(None)
+
+    def change_difficulty(self, steps: int) -> None:
+        """Change the share of the grade the trainer gets, also during a ride."""
+        c = self.settings.control
+        difficulty = round(min(max(c.difficulty + steps * DIFFICULTY_STEP, 0.0), 1.0), 2)
+        if difficulty == c.difficulty:
+            return
+        self.settings.control = replace(c, difficulty=difficulty)
+        self._save_settings()
+        if self.runner is not None:
+            self.runner.set_difficulty(difficulty)
+        self.statusBar().showMessage(f"Difficulty {difficulty * 100:.0f} %", 3000)
+        self._update_controls(None)
 
     def zoom_text(self, steps: int) -> None:
         """Make the text larger (+1), smaller (-1) or back to normal (0)."""
@@ -368,9 +388,14 @@ class RideWindow(QMainWindow):
         )
         t["speed"].set(f"{snap.v * 3.6:.1f} km/h", trainer_speed)
         clamped = self._clamped(snap)
+        difficulty = self.settings.control.difficulty
+        notes = (["min"] if clamped else []) + (
+            [f"{difficulty * 100:.0f} %"] if difficulty < 1.0 else []
+        )
         t["grade"].set(
             f"{snap.terrain_grade:+.1f} %",
-            f"trainer {describe_command(snap.command)}" + (" (minimum)" if clamped else ""),
+            f"trainer {describe_command(snap.command)}"
+            + (f" ({', '.join(notes)})" if notes else ""),
             highlight=clamped,
         )
         t["distance"].set(f"{snap.s / 1000:.2f} km", f"{snap.remaining / 1000:.2f} km to go")
@@ -405,6 +430,9 @@ class RideWindow(QMainWindow):
         self.settings_action.setEnabled(not riding)
         self.start_action.setEnabled(self.course is not None and not riding)
         self.stop_action.setEnabled(riding)
+        difficulty = self.settings.control.difficulty
+        self.easier_action.setEnabled(difficulty > 0.0)
+        self.harder_action.setEnabled(difficulty < 1.0)
         state = snap.state if snap is not None and riding else None
         self.pause_action.setEnabled(
             state in (RideState.RIDING, RideState.PAUSED) and snap.trainer_connected

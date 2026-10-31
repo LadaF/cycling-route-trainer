@@ -4,6 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
 from PySide6.QtGui import QFontMetricsF  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from crt.config import Settings  # noqa: E402
 from crt.control.policy import ControlSettings, GradeCommand  # noqa: E402
@@ -60,7 +61,7 @@ def test_window_shows_snapshot(window, tmp_path):
     assert t["distance"]._detail.text() == "1.50 km to go"
     assert t["time"]._value.text() == "0:01:35"
     # Terrain at -2 % with a 1 % minimum: the clamp is shown.
-    assert t["grade"]._detail.text() == "trainer +1.0 % (minimum)"
+    assert t["grade"]._detail.text() == "trainer +1.0 % (min)"
     window.show_snapshot(snapshot(command=GradeCommand(SimulationParameters(3.0)),
                                   terrain_grade=3.0))  # fmt: skip
     assert t["grade"]._detail.text() == "trainer +3.0 %"
@@ -98,8 +99,6 @@ def test_tile_value_grows_with_the_tile_and_fits(qtbot):
 
 
 def test_text_zoom(window, tmp_path):
-    from PySide6.QtWidgets import QApplication
-
     try:
         normal = QApplication.font().pointSizeF()
         window.zoom_text(+1)
@@ -116,6 +115,17 @@ def test_text_zoom(window, tmp_path):
         apply_font_scale(1.0)
 
 
+def test_tile_detail_does_not_widen_the_tile(qtbot):
+    tile = MetricTile("Grade")
+    qtbot.addWidget(tile)
+    tile.show()
+    tile.set("+9.0 %", "trainer +9.0 %")
+    width = tile.minimumSizeHint().width()
+    tile.set("+9.0 %", "trainer +1.5 % (min, 50 %) and a lot more text")
+    QApplication.processEvents()
+    assert tile.minimumSizeHint().width() == width
+
+
 def test_profile_unit_needs_no_label_row(window):
     from crt.gui.profile import UnitAxis
 
@@ -128,6 +138,20 @@ def test_cadence_display_ignores_single_dips(window):
     for cadence in (85.0, 84.0, 20.0, 86.0, 85.0):
         window.show_snapshot(snapshot(cadence=cadence))
     assert window.tiles["cadence"]._value.text() == "85 rpm"
+
+
+def test_difficulty_buttons(window, tmp_path):
+    assert not window.harder_action.isEnabled()
+    window.easier_action.trigger()
+    window.easier_action.trigger()
+    assert window.settings.control.difficulty == 0.8
+    assert Settings.load(tmp_path / "settings.toml").control.difficulty == 0.8
+    window.show_snapshot(snapshot(command=GradeCommand(SimulationParameters(2.4)),
+                                  terrain_grade=3.0))  # fmt: skip
+    assert window.tiles["grade"]._detail.text() == "trainer +2.4 % (80 %)"
+    for _ in range(10):
+        window.change_difficulty(-1)
+    assert window.settings.control.difficulty == 0.0 and not window.easier_action.isEnabled()
 
 
 def test_settings_dialog(qtbot):

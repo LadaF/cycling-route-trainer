@@ -27,6 +27,9 @@ Set the trainer (e.g. `Hammer 50414`), the heart rate sensor and your mass in
 *Settings*. They are kept in `settings.toml` in the user config directory. *Start*
 connects and the ride starts as soon as the trainer is connected; *Space* pauses and
 resumes; *Stop* ends the ride. The FIT file is written next to the ride log.
+*Easier* / *Harder* (Ctrl+[ / Ctrl+]) change the difficulty, the share of the grade
+the trainer gets, by 10 %, also during a ride; the speed still follows the true grade.
+The new grade is sent at once, the change is logged and kept in the settings.
 *Reverse* (Ctrl+R) switches to the course ridden the other way, kept next to it as
 `ride.reverse.crt.npz`; reversing again goes back to `ride.crt.npz`.
 The big values fill their tiles, so they grow with the window (maximize it, or drag
@@ -35,8 +38,8 @@ larger or smaller; the size is kept in the settings.
 
 The window shows power (3 s average), cadence (5 s median, for display only; the log
 and the FIT keep the sensor values), heart rate, simulated speed, terrain grade with
-the grade sent to the trainer (marked when the minimum grade holds it up), distance,
-time and elevation. The profile shows the next 2 km coloured by grade. Map tiles come
+the grade sent to the trainer (marked *min* when the minimum grade holds it up, and
+with the difficulty when below 100 %), distance, time and elevation. The profile shows the next 2 km coloured by grade. Map tiles come
 from OpenStreetMap and are cached; without network a plain track is shown.
 
 ## Diagnostic tools

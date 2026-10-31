@@ -7,6 +7,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 from crt.control.policy import Command, LevelPolicy
 from crt.devices.base import HeartRateSample, Trainer, TrainerSample
@@ -94,6 +95,15 @@ class RideRunner:
     def stop(self) -> None:
         """End the ride before the finish; ``run`` then returns as usual."""
         self._stop = True
+
+    def set_difficulty(self, difficulty: float) -> None:
+        """Scale the grade sent to the trainer from now on (the physics keeps the true
+        grade); the new grade is sent at once."""
+        policy = self.session.policy
+        policy.settings = replace(policy.settings, difficulty=difficulty)
+        policy.reset()
+        if self.log:
+            self.log.event(self.clock.now(), f"difficulty {difficulty * 100:.0f} %")
 
     # -- loops ----------------------------------------------------------------
 

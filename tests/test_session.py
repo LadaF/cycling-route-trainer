@@ -186,6 +186,36 @@ async def test_runner_pause_resume_and_stop_are_logged(make_course, tmp_path):
     assert events == ["trainer connected", "start", "paused", "resumed", "stop"]
 
 
+async def test_runner_changes_difficulty_during_ride(make_course, tmp_path):
+    course = make_course(length=5000.0, grade=0.08)
+    clock = FastClock()
+    session = session_for(course)
+    log = RideLog(tmp_path / "ride.csv", {"course": "x", "start_s": 0.0})
+    runner = RideRunner(session, clock, log)
+    trainer = MockTrainer(
+        constant_power(250.0), clock.now, clock.sleep, runner.trainer_sample,
+        runner.trainer_connection,
+    )  # fmt: skip
+    changed_at: list[float] = []
+
+    def rider(snap) -> None:
+        if snap.elapsed >= 20 and not changed_at:
+            changed_at.append(clock.now())
+            runner.set_difficulty(0.5)
+        elif changed_at and clock.now() >= changed_at[0] + 2:
+            runner.stop()
+
+    await asyncio.wait_for(runner.run(trainer, on_update=rider), timeout=30)
+    log.close()
+    assert trainer.last_grade == pytest.approx(4.0)
+    grades = [c.params.grade_percent for _t, c in trainer.commands]
+    switch = grades.index(4.0)
+    assert set(grades[:switch]) == {8.0} and set(grades[switch:]) == {4.0}
+    events = [r["command"] for r in csv.DictReader(_skip_header(tmp_path / "ride.csv"))
+              if r["kind"] == "event"]  # fmt: skip
+    assert "difficulty 50 %" in events
+
+
 def _skip_header(path):
     f = path.open(encoding="utf-8")
     f.readline()

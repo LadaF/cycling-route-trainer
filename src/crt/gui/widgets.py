@@ -55,11 +55,14 @@ class MetricTile(QFrame):
         self._value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         for label in (self._caption, self._detail):
             label.setStyleSheet("color: palette(placeholder-text)")
+        # The detail takes the rest of the line, so a longer text cannot widen the tile
+        # and move the map; a text that does not fit is cut on the left.
+        self._detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._detail.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         # The caption and the detail share the top line, leaving the value more height.
         top = QHBoxLayout()
         top.addWidget(self._caption)
-        top.addStretch()
-        top.addWidget(self._detail)
+        top.addWidget(self._detail, stretch=1)
         self._value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 4)
