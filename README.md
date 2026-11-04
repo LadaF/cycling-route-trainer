@@ -30,6 +30,11 @@ resumes; *Stop* ends the ride. The FIT file is written next to the ride log.
 *Easier* / *Harder* (Ctrl+[ / Ctrl+]) change the difficulty, the share of the grade
 the trainer gets, by 10 %, also during a ride; the speed still follows the true grade.
 The new grade is sent at once, the change is logged and kept in the settings.
+*Courses…* (Ctrl+K) lists the courses opened before, with their details. There a
+route can be imported, prepared again with another elevation source, or given its
+bridges and tunnels: *Open the query in the browser* runs it in Overpass Turbo,
+*Export → Data → raw OSM data* downloads or copies the answer, and *Load the saved
+answer…* or *Paste the answer* uses it.
 *Reverse* (Ctrl+R) switches to the course ridden the other way, kept next to it as
 `ride.reverse.crt.npz`; reversing again goes back to `ride.crt.npz`.
 The big values fill their tiles, so they grow with the window (maximize it, or drag
@@ -66,7 +71,7 @@ Windows, do not pair the trainer in Windows Settings.
 ```sh
 crt-tool route ride.gpx --plot                 # writes ride.crt.npz next to the GPX
 crt-tool route ride.gpx --plot-file ride.png --compare   # also plot Copernicus
-crt-tool route ride.gpx --no-bridges           # skip the OpenStreetMap bridge query
+crt-tool route ride.gpx --structures export.json   # bridges and tunnels, see below
 crt-tool route ride.gpx --reverse              # the other way: ride.reverse.crt.npz
 ```
 
@@ -75,21 +80,19 @@ crt-tool route ride.gpx --reverse              # the other way: ride.reverse.crt
   surface model: on forested roads it can show bumps of 10–30 m that are not there.
   `--source file` uses the elevations in the route file. Downloaded data is cached
   in the user cache directory (`~/.cache/crt` on Linux).
-* **Bridges and tunnels:** taken from OpenStreetMap through the public Overpass API:
-  one attempt on overpass-api.de, then one on overpass.private.coffee, each given up
-  after 5 s (`--overpass-timeout`). If it fails, the
-  course is prepared without this correction and the summary says `not checked`.
-  Opening a route in `crt-gui` or `crt-tool ride` keeps the prepared course next to
-  it and reuses it while it is newer than the route; run `crt-tool route` again (for
-  example with `--overpass-timeout 60`) to redo it.
-  When busy, the public server answers only browser tools, so the answer can be
-  fetched in the browser instead:
+* **Bridges and tunnels:** taken from OpenStreetMap. The public Overpass server
+  answers only browser tools when it is busy, which is nearly always, so the answer
+  is fetched in the browser and the application does not query the server itself.
+  In `crt-gui` this is done in *Courses…*; on the command line:
   ```sh
   crt-tool bridges-query ride.gpx    # prints the query and an Overpass Turbo link
   # open the link; when the answer is shown: Export → Data → raw OSM data or GeoJSON
   crt-tool route ride.gpx --structures export.json
   ```
-  The answer is cached, so the route needs it only once.
+  The answer is cached, so the route needs it only once. Without it the course is
+  prepared without this correction and marked `not checked`.
+  Opening a route in `crt-gui` or `crt-tool ride` keeps the prepared course next to
+  it and reuses it while it is newer than the route.
 * **Smoothing:** a 20 m Gaussian removes the steps that appear where the GPS track
   strays from the road onto a cutting or embankment.
 

@@ -1,3 +1,4 @@
+import json
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -164,3 +165,65 @@ def test_settings_dialog(qtbot):
     assert result.trainer == "Hammer 50414"
     assert result.rider.max_speed == pytest.approx(50 / 3.6)
     assert result.control.difficulty == pytest.approx(0.8)
+
+
+async def test_course_manager(qtbot, tmp_path, monkeypatch):
+    from test_route import SlopeProvider, north_gpx
+
+    from crt.elevation import bridges
+    from crt.gui.course_manager import CourseManager
+    from crt.route import pipeline
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+    monkeypatch.setattr(pipeline, "providers_for", lambda source: [SlopeProvider()])
+    settings = Settings(courses=[str(tmp_path / "gone.crt.npz")])
+    saves = []
+    manager = CourseManager(settings, lambda: saves.append(1))
+    qtbot.addWidget(manager)
+    assert "not there" in manager.details.text() and not manager.ride_button.isEnabled()
+
+    await manager.import_route(north_gpx(tmp_path / "north.gpx"))
+    course_file = tmp_path / "north.crt.npz"
+    assert settings.courses[0] == str(course_file) and saves
+    assert manager.selected == course_file and manager.ride_button.isEnabled()
+    assert "not checked" in manager.details.text()
+    assert manager._query_url().startswith("https://overpass-turbo.eu/?Q=")
+
+    bridge = {
+        "type": "way",
+        "tags": {"highway": "primary", "bridge": "yes", "name": "Most"},
+        "geometry": [{"lat": 50.003, "lon": 14.0}, {"lat": 50.005, "lon": 14.0}],
+    }
+    QApplication.clipboard().setText(json.dumps({"elements": [bridge]}))
+    with qtbot.waitSignal(manager.changed) as changed:
+        manager.paste_button.click()
+        await manager._task
+    assert changed.args == [course_file] and not manager.busy
+    assert "bridge Most at" in manager.details.text()
+
+    with qtbot.waitSignal(manager.ride) as ride:
+        manager.ride_button.click()
+    assert ride.args == [course_file]
+
+
+def test_window_reloads_a_rebuilt_course(window, make_course):
+    window.course.save(window.course_file)
+    make_course(length=500.0).save(window.course_file)  # prepared again elsewhere
+    window._course_file_changed(window.course_file.with_name("other.crt.npz"))
+    assert window.course.length == pytest.approx(2000.0)
+    window._course_file_changed(window.course_file)
+    assert window.course.length == pytest.approx(500.0)
+
+
+def test_course_manager_uses_the_unscaled_font(window):
+    from crt.gui.course_manager import CourseManager
+
+    normal = QApplication.font().pointSizeF()
+    try:
+        window.zoom_text(+1)
+        window.manage_courses()
+        (manager,) = window.findChildren(CourseManager)
+        assert manager.details.font().pointSizeF() == pytest.approx(normal)
+        manager.close()
+    finally:
+        apply_font_scale(1.0)

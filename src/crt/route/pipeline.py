@@ -6,11 +6,11 @@ tunnels → smooth → grade.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
@@ -19,7 +19,7 @@ from crt.elevation.base import ElevationProvider, fill_from
 from crt.elevation.copernicus import CopernicusGlo30
 from crt.elevation.cuzk import CuzkDmr5g
 from crt.elevation.ign import IgnRgeAlti
-from crt.route.course import Course
+from crt.route.course import Course, reversed_path
 from crt.route.geometry import (
     LocalProjection,
     bearing_deg,
@@ -42,10 +42,17 @@ class PipelineOptions:
     # Gaussian sigma of the elevation profile [m]; 0 = none. 20 m removes the steps
     # where the GPS track strays from the road onto a cutting or embankment.
     smoothing: float = 20.0
-    fix_bridges: bool = True  # needs the public Overpass API; skipped if it fails
-    overpass_timeout: float = 5.0  # s; a slow Overpass would hold up opening a route
-    # An Overpass answer saved from the browser, used instead of querying the server
+    # Bridges and tunnels from an Overpass answer saved from the browser (the cached
+    # one, or ``structures_file``); without one the course is marked as not checked.
+    fix_bridges: bool = True
     structures_file: str | None = None
+
+    @classmethod
+    def of(cls, course: Course) -> PipelineOptions:
+        """The options a course was prepared with (those this version still knows)."""
+        names = {f.name for f in dataclasses.fields(cls)}
+        saved = course.meta.get("options", {})
+        return cls(**{k: v for k, v in saved.items() if k in names})
 
 
 def providers_for(source: str) -> list[ElevationProvider]:
@@ -102,7 +109,14 @@ def route_grid(raw: RawRoute, options: PipelineOptions) -> RouteGrid:
 def structure_query(path: Path, options: PipelineOptions | None = None) -> str:
     """The Overpass query for the bridges and tunnels of a route, to run in a browser."""
     g = route_grid(read_route(path), options or PipelineOptions())
-    return bridges.structure_query(g.lat, g.lon, g.x, g.y, timeout=25)
+    return bridges.structure_query(g.lat, g.lon, g.x, g.y)
+
+
+def overpass_turbo_url(query: str) -> str:
+    """Overpass Turbo with the query filled in and run at once."""
+    from urllib.parse import quote
+
+    return f"https://overpass-turbo.eu/?Q={quote(query)}&R"
 
 
 def build_course(
@@ -133,13 +147,7 @@ def build_course(
         if options.structures_file:  # given explicitly: a bad file is an error
             structures = bridges.import_structures(Path(options.structures_file), lat, lon, x, y)
         else:
-            try:
-                structures = bridges.fetch_structures(
-                    lat, lon, x, y, timeout=options.overpass_timeout
-                )
-            except (httpx.HTTPError, ValueError) as exc:
-                log.warning("bridge and tunnel correction skipped: %s", exc)
-                structures = None
+            structures = bridges.cached_structures(lat, lon, x, y)
         if structures is not None:
             intervals = bridges.match_intervals(s, x, y, bearing, structures, projection)
             structures_checked = True
@@ -177,3 +185,38 @@ def prepared_course(path: Path, options: PipelineOptions | None = None) -> tuple
         log.warning("cannot save the prepared course: %s", exc)
         return course, path
     return course, saved
+
+
+def route_of(course: Course) -> Path | None:
+    """The route file a course was prepared from, if it is still there."""
+    source = course.meta.get("source_file")
+    path = Path(source) if source else None
+    return path if path is not None and path.is_file() else None
+
+
+def rebuild_course(course_file: Path, *, answer: str | None = None, **changes) -> Course:
+    """Prepare the route of a course file again, with some options changed, and save
+    it. A reversed course stays reversed, and the course for the other direction, if
+    kept next to it, is replaced as well.
+
+    ``answer`` is an Overpass answer copied from the browser: it is kept as the
+    route's bridges and tunnels, and the correction is switched on."""
+    old = Course.load(course_file)
+    route = route_of(old)
+    if route is None:
+        raise FileNotFoundError(f"the route {old.meta.get('source_file')} is not there")
+    # An answer file given before is in the cache by now, and may be gone.
+    changes = {"structures_file": None, **changes}
+    options = dataclasses.replace(PipelineOptions.of(old), **changes)
+    if answer is not None:
+        options = dataclasses.replace(options, fix_bridges=True)
+        g = route_grid(read_route(route), options)
+        bridges.import_answer(answer, "the pasted answer", g.lat, g.lon, g.x, g.y)
+    course = build_course(route, options)
+    if old.meta.get("reversed"):
+        course = course.reversed()
+    course.save(course_file)
+    other = reversed_path(course_file)
+    if other.exists():
+        course.reversed().save(other)
+    return course

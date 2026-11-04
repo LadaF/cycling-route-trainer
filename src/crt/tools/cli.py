@@ -498,19 +498,17 @@ def route_cmd(
         bool,
         typer.Option(
             "--bridges/--no-bridges",
-            help="Correct bridges and tunnels from OpenStreetMap (skipped if Overpass fails).",
+            help="Correct bridges and tunnels from a saved OpenStreetMap answer "
+            "(--structures, or one given before).",
         ),
     ] = True,
-    overpass_timeout: Annotated[
-        float, typer.Option(help="Give up on Overpass after this long [s].")
-    ] = 5.0,
     structures: Annotated[
         Path | None,
         typer.Option(
             exists=True,
             dir_okay=False,
             help="Overpass answer saved from the browser (see bridges-query), raw OSM "
-            "data or GeoJSON, used instead of querying the server.",
+            "data or GeoJSON. It is cached, so the route needs it only once.",
         ),
     ] = None,
     reverse: Annotated[
@@ -535,7 +533,7 @@ def route_cmd(
         raise typer.BadParameter(f"use one of {', '.join(SOURCES)}", param_hint="--source")
     options = PipelineOptions(
         source=source, spacing=spacing, smoothing=smoothing, fix_bridges=fix_bridges,
-        overpass_timeout=overpass_timeout, structures_file=str(structures) if structures else None,
+        structures_file=str(structures) if structures else None,
     )  # fmt: skip
     from crt.elevation.bridges import StructuresFileError
 
@@ -587,8 +585,8 @@ def route_cmd(
         console.print("  bridges/tunnels: [yellow]not checked[/]")
         if fix_bridges and source != "file":
             console.print(
-                f"  (if Overpass is busy, run [bold]crt-tool bridges-query {route_file}[/]"
-                " in the browser and pass the answer with [bold]--structures[/])"
+                f"  (run [bold]crt-tool bridges-query {route_file}[/], open the link and"
+                " pass the saved answer with [bold]--structures[/], or use Courses in crt-gui)"
             )
     elif not structures:
         console.print("  bridges/tunnels: none on the route")
@@ -620,19 +618,17 @@ def bridges_query_cmd(
 ) -> None:
     """Print the Overpass query for a route's bridges and tunnels, to run in a browser.
 
-    The public Overpass server serves browser tools first and often turns the
-    application away. Open the printed link (or paste the query into
+    The public Overpass server serves browser tools first and turns applications
+    away when it is busy. Open the printed link (or paste the query into
     https://overpass-turbo.eu), wait for the answer, choose Export → Data → raw OSM
     data (or GeoJSON), and pass the saved file to
     "crt-tool route ROUTE --structures FILE".
     """
-    from urllib.parse import quote
-
-    from crt.route.pipeline import structure_query
+    from crt.route.pipeline import overpass_turbo_url, structure_query
 
     query = structure_query(route_file)
     typer.echo(query)
-    typer.echo(f"\nhttps://overpass-turbo.eu/?Q={quote(query)}&R", err=True)
+    typer.echo(f"\n{overpass_turbo_url(query)}", err=True)
 
 
 # ---------------------------------------------------------------------------

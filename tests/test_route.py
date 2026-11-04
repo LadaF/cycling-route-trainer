@@ -2,7 +2,6 @@ import json
 import re
 from pathlib import Path
 
-import httpx
 import numpy as np
 import pytest
 
@@ -281,33 +280,14 @@ def test_prepared_course_is_saved_and_reused(tmp_path, monkeypatch, make_course)
     assert len(builds) == 2
 
 
-def test_overpass_timeout_reaches_server_and_client(tmp_path, monkeypatch):
+def test_overpass_query_uses_overlapping_boxes():
     from crt.elevation import bridges
 
-    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
-    calls = []
-    monkeypatch.setattr(
-        bridges, "_query_overpass", lambda query, timeout: calls.append((query, timeout)) or {}
-    )
-    x = np.array([0.0, 100.0])
-    bridges.fetch_structures(np.array([50.0, 50.001]), np.array([14.0, 14.0]), x, x, timeout=4.5)
-    ((query, timeout),) = calls
-    assert timeout == 4.5 and "[timeout:5]" in query
-
-
-def test_overpass_query_uses_overlapping_boxes(tmp_path, monkeypatch):
-    from crt.elevation import bridges
-
-    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
-    calls = []
-    monkeypatch.setattr(
-        bridges, "_query_overpass", lambda query, timeout: calls.append(query) or {}
-    )
     # 5 km due north in 500 m steps: three 2 km pieces
     lat = 50.0 + np.arange(11) * 500 / 111_320
     y = np.arange(11) * 500.0
-    bridges.fetch_structures(lat, np.full(11, 14.0), np.zeros(11), y)
-    (query,) = calls
+    query = bridges.structure_query(lat, np.full(11, 14.0), np.zeros(11), y)
+    assert "[timeout:25]" in query
     boxes = re.findall(r'\["tunnel"!="building_passage"\]\(([^)]*)\)', query)
     assert len(boxes) == 3 and query.count('["bridge"!="no"]') == 3
     edges = [[float(v) for v in box.split(",")] for box in boxes]
@@ -321,11 +301,6 @@ def test_structures_from_browser_file_are_used_and_cached(tmp_path, monkeypatch)
     from crt.elevation import bridges
 
     monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
-
-    def no_server(query, timeout):
-        raise httpx.ConnectError("the test must not reach Overpass")
-
-    monkeypatch.setattr(bridges, "_query_overpass", no_server)
     raw = RawRoute("north", np.linspace(50.0, 50.009, 50), np.full(50, 14.0), None)
     bridge = {
         "type": "way",
@@ -340,12 +315,13 @@ def test_structures_from_browser_file_are_used_and_cached(tmp_path, monkeypatch)
             Path("north.gpx"), PipelineOptions(**options), providers=[SlopeProvider()], raw=raw
         )
 
+    assert build().meta["structures_checked"] is False  # no answer yet
     c = build(structures_file=str(answer))
     assert c.meta["structures_checked"] is True
     ((interval,),) = [c.meta["structures"]]
     assert interval["name"] == "Most" and 320 < interval["s0"] < interval["s1"] < 570
-    # Later preparations find the answer in the cache, whatever the Overpass timeout.
-    again = build(overpass_timeout=60.0)
+    # Later preparations find the answer in the cache.
+    again = build()
     assert again.meta["structures"] == c.meta["structures"]
 
 
@@ -363,28 +339,6 @@ def test_browser_file_without_geometry_is_an_error(tmp_path, monkeypatch):
             providers=[SlopeProvider()],
             raw=raw,
         )
-
-
-def test_overpass_servers_are_tried_once_each(monkeypatch):
-    from crt.elevation import bridges
-
-    calls = []
-
-    def post(url, **kw):
-        calls.append(url)
-        request = httpx.Request("POST", url)
-        if url == bridges.OVERPASS_URLS[0]:
-            return httpx.Response(502, request=request)
-        return httpx.Response(200, json={"elements": []}, request=request)
-
-    monkeypatch.setattr(bridges.httpx, "post", post)
-    assert bridges._query_overpass("q", 5.0) == {"elements": []}
-    assert calls == bridges.OVERPASS_URLS
-    calls.clear()
-    monkeypatch.setattr(bridges, "OVERPASS_URLS", [bridges.OVERPASS_URLS[0]] * 2)
-    with pytest.raises(httpx.HTTPStatusError):
-        bridges._query_overpass("q", 5.0)
-    assert len(calls) == 2  # no retries beyond one per server
 
 
 def test_structures_from_turbo_geojson(tmp_path, monkeypatch):
@@ -413,3 +367,60 @@ def test_structures_from_turbo_geojson(tmp_path, monkeypatch):
     )
     ((interval,),) = [c.meta["structures"]]
     assert interval["kind"] == "tunnel" and interval["name"] == "T"
+
+
+def north_gpx(path: Path) -> Path:
+    points = "".join(f'<trkpt lat="{lat:.4f}" lon="14.0"/>' for lat in np.linspace(50, 50.009, 10))
+    path.write_text(
+        '<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">'
+        f"<trk><name>north</name><trkseg>{points}</trkseg></trk></gpx>"
+    )
+    return path
+
+
+def test_rebuild_reversed_course_with_browser_answer(tmp_path, monkeypatch):
+    from crt.elevation import bridges
+    from crt.route import pipeline
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+    monkeypatch.setattr(pipeline, "providers_for", lambda source: [SlopeProvider()])
+    course, forward = pipeline.prepared_course(north_gpx(tmp_path / "north.gpx"))
+    assert course.meta["structures_checked"] is False
+    backward = reversed_path(forward)
+    course.reversed().save(backward)
+    bridge = {
+        "type": "way",
+        "tags": {"highway": "primary", "bridge": "yes"},
+        "geometry": [{"lat": 50.003, "lon": 14.0}, {"lat": 50.005, "lon": 14.0}],
+    }
+    answer = tmp_path / "export.json"
+    answer.write_text(json.dumps({"elements": [bridge]}))
+
+    rebuilt = pipeline.rebuild_course(backward, structures_file=str(answer))
+    assert rebuilt.meta["reversed"] and rebuilt.meta["structures_checked"]
+    ((interval,),) = [Course.load(backward).meta["structures"]]
+    ((other,),) = [Course.load(forward).meta["structures"]]  # the other way too
+    assert not Course.load(forward).meta.get("reversed")
+    assert interval["s0"] == pytest.approx(rebuilt.length - other["s1"])
+    # The answer is cached: preparing again needs no file.
+    answer.unlink()
+    again = pipeline.rebuild_course(forward, smoothing=10.0)
+    assert again.meta["structures"] == [other] and again.meta["options"]["smoothing"] == 10.0
+
+
+def test_rebuild_with_pasted_answer(tmp_path, monkeypatch):
+    from crt.elevation import bridges
+    from crt.route import pipeline
+
+    monkeypatch.setattr(bridges, "cache_dir", lambda *parts: tmp_path)
+    monkeypatch.setattr(pipeline, "providers_for", lambda source: [SlopeProvider()])
+    route = north_gpx(tmp_path / "north.gpx")
+    course = build_course(route, PipelineOptions(fix_bridges=False))
+    course.save(tmp_path / "north.crt.npz")
+    with pytest.raises(bridges.StructuresFileError, match="the pasted answer: not JSON"):
+        pipeline.rebuild_course(tmp_path / "north.crt.npz", answer="Export ▸ copy")
+    query = pipeline.structure_query(route)
+    with pytest.raises(bridges.StructuresFileError, match="this is the query, not its answer"):
+        pipeline.rebuild_course(tmp_path / "north.crt.npz", answer=query)
+    rebuilt = pipeline.rebuild_course(tmp_path / "north.crt.npz", answer='{"elements": []}')
+    assert rebuilt.meta["structures_checked"] and rebuilt.meta["options"]["fix_bridges"]

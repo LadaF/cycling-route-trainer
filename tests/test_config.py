@@ -21,3 +21,14 @@ def test_missing_unknown_and_broken_settings(tmp_path):
     assert loaded.trainer == "H3" and loaded.rider.rider_mass == 70.0
     path.write_text("not = [toml")
     assert Settings.load(path) == Settings()
+
+
+def test_course_list(tmp_path):
+    from pathlib import Path
+
+    s = Settings()
+    for name in ("a", "b", "a"):
+        s.remember_course(Path(name))
+    assert s.course == "a" and s.courses == ["a", "b"]
+    s.save(tmp_path / "settings.toml")
+    assert Settings.load(tmp_path / "settings.toml").courses == ["a", "b"]

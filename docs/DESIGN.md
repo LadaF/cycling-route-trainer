@@ -145,12 +145,12 @@ cycling-route-trainer/
      bounding boxes of 2 km pieces of the route (much cheaper for the server than an
      `around` search along the route line; the extra structures are dropped by the
      matching below). `tunnel=building_passage` is excluded: it is at ground level.
-     One attempt on overpass-api.de, then one on overpass.private.coffee (when full,
-     overpass-api.de answers 502 at once and says it serves browser tools first),
-     result cached. If the user fetches the answer in the browser instead
-     (`crt-tool bridges-query`, then `crt-tool route --structures`), it is cached
-     the same way. If the public servers fail (they are often overloaded), the
-     course is prepared without the correction and marked as not checked. A more reliable source (ZABAGED, a local OSM extract)
+     The application does not query the server: when busy (nearly always),
+     overpass-api.de answers applications 502 and serves only browser tools. The
+     user runs the query in Overpass Turbo and loads the saved answer (*Courses…*
+     in the GUI, or `crt-tool bridges-query`, then `crt-tool route --structures`);
+     it is cached by query. Without an answer the course is prepared without the
+     correction and marked as not checked. A more reliable source (ZABAGED, a local OSM extract)
      can replace it later.
    * Map them to intervals of *s* and replace the elevation inside each interval with
      a linear interpolation between its end points. Allow manual intervals in the
@@ -348,7 +348,11 @@ PySide6 with a `qasync` event loop. Main window:
   * elevation sources
   * device pairing (reuses `scan`/`probe`)
 * **Course manager:** import a route, choose the DEM, preview and adjust the
-  smoothing, edit bridge and tunnel intervals, save the processed course.
+  smoothing, edit bridge and tunnel intervals, save the processed course. *Implemented
+  in part:* the course list (kept in the settings), details, import, preparing again
+  with another DEM, and the bridges and tunnels through Overpass Turbo in the
+  browser (open or copy the link, load the saved answer or paste it). Rebuilding a course also
+  replaces the kept course for the other direction.
 * **Post-ride:** summary, then export.
 
 GUI updates are throttled to about 10 Hz from session snapshots. The GUI never calls

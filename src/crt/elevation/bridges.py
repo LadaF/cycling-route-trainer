@@ -1,39 +1,27 @@
 """Bridge and tunnel correction.
 
 A terrain model has no bridges: on a viaduct it gives the valley floor, in a tunnel
-the hill above. Bridges and tunnels are taken from OpenStreetMap: from the Overpass
-API, or from an Overpass answer saved in the browser when the public server turns
-the application away (it serves browser tools first when it is busy). The
-route intervals that run *along* them are found, and the elevation inside each
-interval is replaced by a straight line between its ends. Passing *under* a bridge is
-not matched, because the route there is not parallel to the bridge.
+the hill above. Bridges and tunnels are taken from OpenStreetMap, from an Overpass
+answer saved in the browser: the public Overpass server serves browser tools first
+and turns applications away when it is busy, which is nearly always. The answer is
+cached, keyed by the query, so a route needs it only once. The route intervals that
+run *along* the structures are found, and the elevation inside each interval is
+replaced by a straight line between its ends. Passing *under* a bridge is not
+matched, because the route there is not parallel to the bridge.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import httpx
 import numpy as np
 
-from crt import __version__
 from crt.elevation.base import cache_dir
 from crt.route.geometry import LocalProjection
-
-log = logging.getLogger(__name__)
-
-# Tried in order, once each: when the main server is full it answers 502 at once.
-OVERPASS_URLS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-]
-# Overpass rejects requests with generic library user agents (HTTP 406).
-HEADERS = {"User-Agent": f"cycling-route-trainer/{__version__}", "Accept": "application/json"}
 
 
 @dataclass(frozen=True)
@@ -55,24 +43,6 @@ class Interval:
         return asdict(self)
 
 
-def _query_overpass(query: str, timeout: float) -> dict:
-    """One attempt per server, no retries: the public servers are often overloaded,
-    and the pipeline then continues without the correction."""
-    for url in OVERPASS_URLS:
-        try:
-            response = httpx.post(
-                url, data={"data": query}, headers=HEADERS, timeout=httpx.Timeout(timeout)
-            )
-            response.raise_for_status()
-            result = response.json()
-            _check_answer(result)
-            return result
-        except (httpx.HTTPError, ValueError) as exc:
-            log.info("Overpass %s: %s", httpx.URL(url).host, exc)
-            error = exc
-    raise error
-
-
 def _check_answer(result: object) -> None:
     if not isinstance(result, dict) or not isinstance(result.get("elements"), list):
         raise ValueError("not an Overpass JSON answer (no list of elements)")
@@ -85,7 +55,7 @@ def _check_answer(result: object) -> None:
 
 def structure_query(
     lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray, *, radius: float = 25.0,
-    chunk: float = 2000.0, timeout: float = 5.0,
+    chunk: float = 2000.0, timeout: float = 25.0,
 ) -> str:  # fmt: skip
     """The Overpass query for the road bridges and tunnels near the route.
 
@@ -123,47 +93,55 @@ def _cache_path(query: str) -> Path:
     return cache_dir("overpass") / f"{hashlib.sha256(body.encode()).hexdigest()[:24]}.json"
 
 
-def fetch_structures(
-    lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray, *, timeout: float = 5.0
-) -> list[Structure]:
-    """Road bridges and tunnels near the route, from the cache or from Overpass.
-
-    ``timeout`` bounds each network step of the request and, rounded up, the query on
-    the server, so the server does not keep working after we give up.
-    """
-    query = structure_query(lat, lon, x, y, timeout=timeout)
-    cache = _cache_path(query)
-    if cache.exists():
-        result = json.loads(cache.read_text())
-    else:
-        log.info("querying Overpass for bridges and tunnels")
-        result = _query_overpass(query, timeout)
-        cache.write_text(json.dumps(result))
-    return parse_structures(result)
+def cached_structures(
+    lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray
+) -> list[Structure] | None:
+    """Road bridges and tunnels near the route from a saved answer, None if there is none."""
+    cache = _cache_path(structure_query(lat, lon, x, y))
+    if not cache.exists():
+        return None
+    return parse_structures(json.loads(cache.read_text()))
 
 
 class StructuresFileError(ValueError):
-    """A structures file given by the user cannot be used."""
+    """An Overpass answer given by the user (a file or pasted text) cannot be used."""
+
+
+def import_answer(
+    text: str, origin: str, lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray
+) -> list[Structure]:
+    """Structures from an Overpass answer saved or copied from the browser, kept in the
+    cache as the answer for this route. Overpass Turbo's "raw OSM data" and GeoJSON
+    exports both work; GeoJSON is converted to the raw form. ``origin`` names the
+    answer in errors."""
+    try:
+        if text.lstrip().startswith("[out:"):
+            raise ValueError(
+                "this is the query, not its answer. Run it in Overpass Turbo and, when the"
+                " map shows the answer, take Export → Data → raw OSM data (or the Data tab)"
+            )
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("not JSON (an Overpass answer starts with '{')") from exc
+        if isinstance(result, dict) and result.get("type") == "FeatureCollection":
+            result = _from_geojson(result)
+        _check_answer(result)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise StructuresFileError(f"{origin}: {exc}") from exc
+    _cache_path(structure_query(lat, lon, x, y)).write_text(json.dumps(result))
+    return parse_structures(result)
 
 
 def import_structures(
     path: Path, lat: np.ndarray, lon: np.ndarray, x: np.ndarray, y: np.ndarray
 ) -> list[Structure]:
-    """Structures from an Overpass answer saved in a file, kept in the cache as the
-    answer for this route. Overpass Turbo's "raw OSM data" and GeoJSON exports both
-    work; GeoJSON is converted to the raw form."""
+    """Structures from an Overpass answer saved in a file (see ``import_answer``)."""
     try:
-        try:
-            result = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ValueError("not a JSON file") from exc
-        if isinstance(result, dict) and result.get("type") == "FeatureCollection":
-            result = _from_geojson(result)
-        _check_answer(result)
-    except (ValueError, KeyError, TypeError) as exc:
-        raise StructuresFileError(f"{path}: {exc}") from exc
-    _cache_path(structure_query(lat, lon, x, y)).write_text(json.dumps(result))
-    return parse_structures(result)
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise StructuresFileError(f"{path}: not a JSON file") from exc
+    return import_answer(text, str(path), lat, lon, x, y)
 
 
 def _from_geojson(collection: dict) -> dict:

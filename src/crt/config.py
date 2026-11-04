@@ -16,6 +16,8 @@ from crt.physics.model import RiderParams
 
 log = logging.getLogger(__name__)
 
+MAX_COURSES = 50
+
 
 def settings_path() -> Path:
     return Path(platformdirs.user_config_dir("crt")) / "settings.toml"
@@ -32,6 +34,7 @@ class Settings:
     trainer: str = ""  # name or address
     heart_rate: str = ""  # name or address; empty: no HR sensor
     course: str = ""  # the last course ridden or opened
+    courses: list[str] = field(default_factory=list)  # the course list, latest first
     font_scale: float = 1.0  # text size in the ride window, relative to the system font
     rider: RiderParams = field(default_factory=RiderParams)
     control: ControlSettings = field(default_factory=ControlSettings)
@@ -50,6 +53,12 @@ class Settings:
         top["rider"] = RiderParams(**_known(RiderParams, data.get("rider", {})))
         top["control"] = ControlSettings(**_known(ControlSettings, data.get("control", {})))
         return cls(**top)
+
+    def remember_course(self, path: Path) -> None:
+        """Make ``path`` the current course and put it first in the course list."""
+        self.course = str(path)
+        self.courses = [self.course] + [c for c in self.courses if c != self.course]
+        del self.courses[MAX_COURSES:]
 
     def save(self, path: Path | None = None) -> None:
         path = path or settings_path()

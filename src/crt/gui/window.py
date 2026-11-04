@@ -58,6 +58,11 @@ def apply_font_scale(scale: float) -> None:
     QApplication.setFont(font)
 
 
+def system_font() -> QFont:
+    """The application font before any scaling, for dialogs not read from the bike."""
+    return QFont(_system_font if _system_font is not None else QApplication.font())
+
+
 class RideWindow(QMainWindow):
     def __init__(
         self,
@@ -111,6 +116,10 @@ class RideWindow(QMainWindow):
             return a
 
         self.open_action = action("Open course…", self.choose_course, "Ctrl+O")
+        self.courses_action = action("Courses…", self.manage_courses, "Ctrl+K")
+        self.courses_action.setToolTip(
+            "Course list, import, elevation source, bridges and tunnels (Ctrl+K)"
+        )
         self.reverse_action = action("Reverse", self.reverse_course, "Ctrl+R")
         self.settings_action = action("Settings…", self.edit_settings, "Ctrl+,")
         smaller = action("A−", lambda: self.zoom_text(-1))
@@ -206,9 +215,26 @@ class RideWindow(QMainWindow):
         self._replace(self._main, 1, profile)
         self.profile = profile
         self._set_map(self._make_map(course))
-        self.settings.course = str(path)
+        self.settings.remember_course(path)
         self._save_settings()
         self._update_controls(None)
+
+    def manage_courses(self) -> None:
+        from crt.gui.course_manager import CourseManager
+
+        manager = CourseManager(self.settings, self._save_settings, self)
+        manager.setFont(system_font())
+        manager.ride.connect(lambda path: asyncio.ensure_future(self.open_course(path)))
+        manager.changed.connect(self._course_file_changed)
+        manager.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        manager.open()  # not exec(): preparing a course runs on the event loop
+
+    def _course_file_changed(self, path: Path) -> None:
+        """A course file was prepared again; reload the shown course if it is affected."""
+        if self.course_file is None or self.riding:
+            return
+        if path in (self.course_file, reversed_path(self.course_file)):
+            self.set_course(Course.load(self.course_file), self.course_file)
 
     def reverse_course(self) -> None:
         """Switch to the course ridden the other way, kept next to the current one."""
@@ -426,6 +452,7 @@ class RideWindow(QMainWindow):
     def _update_controls(self, snap: RideSnapshot | None) -> None:
         riding = self.riding
         self.open_action.setEnabled(not riding)
+        self.courses_action.setEnabled(not riding)
         self.reverse_action.setEnabled(self.course is not None and not riding)
         self.settings_action.setEnabled(not riding)
         self.start_action.setEnabled(self.course is not None and not riding)
