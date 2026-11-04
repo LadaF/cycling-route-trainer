@@ -135,3 +135,7 @@ crt-tool export ~/.local/share/crt/rides/2026-10-25_215225.csv --format both
 5. Try `level 5` and `levelw 5` to see which resistance encoding the H3 accepts.
    The H3 reports a resistance range of 0–10. This only matters for the fallback
    mode.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The GUI uses Qt through PySide6, which is under the LGPL v3.
